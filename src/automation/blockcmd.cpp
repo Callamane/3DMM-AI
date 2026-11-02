@@ -20,8 +20,12 @@ namespace automation
 const double kdSpacingDefault = 1.0;    // metres between neighbours
 const double kdHiddenMaxArrange = 0.35; // box overlap allowed with a nearer actor: blocking keeps faces clear
 const double kdVisibleMinArrange = 0.8; // share of each silhouette that must show
-const double krgdShift[] = {0, 0.6, -0.6, 1.2, -1.2};                // sideways tries, metres
-const double krgdDepth[] = {1.0, 1.4, 1.8, 2.3, 2.8, 3.4, 4.1, 5.0}; // metres from the placement point
+const double kdNearFloorRow = 0.95;     // share of the view height where "the bottom of the picture" is measured
+const double krgdShift[] = {0, 0.6, -0.6, 1.2, -1.2}; // sideways tries, metres
+// Metres beyond the nearest floor the camera sees (where the bottom of the
+// picture meets the floor), so the search starts in front of the camera
+// whatever the set's placement point is
+const double krgdDepth[] = {1.0, 1.4, 1.8, 2.3, 2.8, 3.4, 4.1, 5.0};
 
 static bool _FCmdArrangeActors(Request &req)
 {
@@ -75,14 +79,6 @@ static bool _FCmdArrangeActors(Request &req)
     if (dSpacing < 0.3 || dSpacing > 5)
         return req.Fail(kszErrBadArgs, "'spacing' must be between 0.3 and 5 metres");
     bool fConversation = strLayout == "conversation";
-    std::vector<double> vecDepths(std::begin(krgdDepth), std::end(krgdDepth));
-    if (req.FHasArg("z"))
-    {
-        double z;
-        if (!req.FArgNumber("z", &z))
-            return fFalse;
-        vecDepths.assign(1, z);
-    }
 
     StageFrame stage;
     CameraModel camera;
@@ -91,6 +87,25 @@ static bool _FCmdArrangeActors(Request &req)
     RC rcView(0, 0, 544, 306);
     if (PmvuCur() != pvNil)
         PmvuCur()->GetRc(&rcView, cooLocal);
+
+    // Where the picture's bottom centre meets the floor: some sets' cameras
+    // look at floor well in front of their placement point
+    Vec3 nearFloor(0, 0, 0);
+    Vec3 worldNear;
+    if (camera.FFloorAt(rcView.Dxp() / 2.0, rcView.Dyp() * kdNearFloorRow, &worldNear))
+        nearFloor = stage.FromWorld(worldNear);
+    if (!req.FHasArg("x"))
+        xCentre = nearFloor.x;
+    std::vector<double> vecDepths;
+    for (double d : krgdDepth)
+        vecDepths.push_back(nearFloor.z + d);
+    if (req.FHasArg("z"))
+    {
+        double z;
+        if (!req.FArgNumber("z", &z))
+            return fFalse;
+        vecDepths.assign(1, z);
+    }
 
     // Keep copies so a failure leaves the actors as they were
     std::vector<PACTR> vecDups;

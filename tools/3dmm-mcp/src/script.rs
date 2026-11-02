@@ -409,6 +409,22 @@ pub fn offstage_x(
     }
 }
 
+/// Longest walk on or off (metres). Wide shots can see so much floor that
+/// the screen edge is many metres from the actor's place.
+pub const MAX_ENTRANCE_WALK: f64 = 3.5;
+
+/// Where an entrance starts or an exit ends: the off-screen x, unless that
+/// is more than MAX_ENTRANCE_WALK from `x`, in which case that far toward it
+/// (inside the frame). The flag says whether it was shortened.
+pub fn entrance_x(x: f64, offstage_x: f64) -> (f64, bool) {
+    let d = offstage_x - x;
+    if d.abs() <= MAX_ENTRANCE_WALK {
+        (offstage_x, false)
+    } else {
+        (x + MAX_ENTRANCE_WALK.copysign(d), true)
+    }
+}
+
 /// Clearance kept between a walker's stopping spot and anyone else
 const STOP_CLEARANCE: f64 = 0.65;
 
@@ -779,6 +795,13 @@ mod tests {
             .unwrap_err()
             .starts_with("scenes[1]: lines[0]"));
         assert!(parse_movie(&json!({"scenes": []})).is_err());
+    }
+
+    #[test]
+    fn long_entrances_are_shortened() {
+        assert_eq!(entrance_x(0.0, 3.0), (3.0, false));
+        assert_eq!(entrance_x(1.0, -16.5), (1.0 - MAX_ENTRANCE_WALK, true));
+        assert_eq!(entrance_x(-0.1, 16.4), (-0.1 + MAX_ENTRANCE_WALK, true));
     }
 
     #[test]

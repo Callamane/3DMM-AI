@@ -782,6 +782,12 @@ impl ThreeDmmServer {
                 }
                 script::Line::Enter { who, side } => {
                     let (x, z) = marks.get(who).copied().unwrap_or((0.0, 1.5));
+                    let (start_x, shortened) = script::entrance_x(x, offstage(*side, z));
+                    if shortened {
+                        notes.push(format!(
+                            "lines[{i}]: this camera sees so much floor that {who} starts walking from inside the frame"
+                        ));
+                    }
                     let facing = if *side == script::Side::Left {
                         "right"
                     } else {
@@ -790,7 +796,7 @@ impl ThreeDmmServer {
                     self.bridge_call(
                         "add_actor",
                         json!({"template": template_of(who), "name": who, "facing": facing, "frame": frame,
-                               "position": {"x": offstage(*side, z), "z": z}}),
+                               "position": {"x": start_x, "z": z}}),
                         timeout,
                     )
                     .await
@@ -816,12 +822,18 @@ impl ThreeDmmServer {
                     frame = end;
                 }
                 script::Line::Exit { who, side } => {
-                    let (_, z) = self.stage_position(who, frame, timeout).await?;
+                    let (x, z) = self.stage_position(who, frame, timeout).await?;
+                    let (end_x, shortened) = script::entrance_x(x, offstage(*side, z));
+                    if shortened {
+                        notes.push(format!(
+                            "lines[{i}]: this camera sees so much floor that {who} leaves before reaching the edge"
+                        ));
+                    }
                     let walk = self
                         .walking_action(&template_of(who), &mut walks, timeout)
                         .await;
                     let end = self
-                        .walk(who, (offstage(*side, z), z), &walk, frame, timeout)
+                        .walk(who, (end_x, z), &walk, frame, timeout)
                         .await
                         .map_err(step(format!("lines[{i}] ({who} exits)")))?;
                     self.bridge_call(

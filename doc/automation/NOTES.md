@@ -612,6 +612,17 @@ on the way:
   MP4. "Make me a 30-second movie of two guys arguing in a diner" became
   one call: two scenes, 31.5 s, subtitles, music, a throw and an exit,
   built and exported in 7.4 s with no review warnings.
+* Scale test: a 10-scene, 2-minute movie (three characters, entrances,
+  exits, a throw, subtitles, music, 44 sounds) built and exported from one
+  script_movie call in about 27 s. It exposed two problems, both fixed:
+  arrange_actors searched depths measured from the set's placement point,
+  but some cameras (the haunted dining hall) look at floor 3.5 m in front
+  of it, so every candidate was behind the table; depths and the default
+  centre are now measured from where the bottom of the picture meets the
+  floor. And entrances walked from the true screen edge, 16 m away on that
+  wide shot (24 s each way); walks on and off are now capped at 3.5 m,
+  starting or ending inside the frame with a note when the edge is further.
+  After the fixes the movie had no review warnings.
 * App restarts: if the connection drops (the app crashed or was closed),
   that call fails saying 3D Movie Maker seems to have stopped, and the next
   call starts it again. The server remembers the last save_movie /
