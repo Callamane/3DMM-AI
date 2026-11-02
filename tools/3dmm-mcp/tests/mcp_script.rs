@@ -268,6 +268,24 @@ async fn script_scene_builds_a_reviewed_scene() -> Result<()> {
     };
     ensure!(voice(0, "Bob") == voice(1, "Bob"), "{movie}");
 
+    // The result comes with a picture of what was made
+    let reply = c
+        .rpc(
+            "tools/call",
+            json!({"name": "script_scene", "arguments": good}),
+        )
+        .await?;
+    let kinds: Vec<&str> = reply["result"]["content"]
+        .as_array()
+        .context("content")?
+        .iter()
+        .filter_map(|b| b["type"].as_str())
+        .collect();
+    ensure!(
+        kinds.contains(&"image") && kinds.last() == Some(&"text"),
+        "{kinds:?}"
+    );
+
     c.tool("quit", json!({"discard_changes": true})).await.ok();
     Ok(())
 }

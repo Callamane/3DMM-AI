@@ -356,7 +356,26 @@ impl ThreeDmmServer {
         let mut script = script::parse(&args).map_err(anyhow::Error::msg)?;
         script::assign_voices(&mut script.cast, &speech::installed_voices().await);
         let result = self.build_scene(&script, true, timeout).await?;
-        Ok(vec![ContentBlock::text(result.to_string())])
+        let mut content = Vec::new();
+        if args.get("preview").and_then(Value::as_bool).unwrap_or(true) {
+            content.extend(
+                self.storyboard_image(json!({"scene": result["scene_index"], "count": 8}), timeout)
+                    .await,
+            );
+        }
+        content.push(ContentBlock::text(result.to_string()));
+        Ok(content)
+    }
+
+    /// A storyboard as image content, so a script's result shows what it
+    /// made; None if it can't be drawn (the build itself still stands)
+    async fn storyboard_image(&self, args: Value, timeout: Duration) -> Option<ContentBlock> {
+        let board = self.bridge_call("storyboard", args, timeout).await.ok()?;
+        let png = tokio::fs::read(board["path"].as_str()?).await.ok()?;
+        Some(ContentBlock::image(
+            base64::engine::general_purpose::STANDARD.encode(png),
+            "image/png",
+        ))
     }
 
     /// Builds a whole movie from scripted scenes: every scene is checked
@@ -434,7 +453,15 @@ impl ThreeDmmServer {
                 result["export"] = serde_json::from_str(&text).unwrap_or(Value::String(text));
             }
         }
-        Ok(vec![ContentBlock::text(result.to_string())])
+        let mut content = Vec::new();
+        if args.get("preview").and_then(Value::as_bool).unwrap_or(true) {
+            content.extend(
+                self.storyboard_image(json!({"all_scenes": true, "count": 12}), timeout)
+                    .await,
+            );
+        }
+        content.push(ContentBlock::text(result.to_string()));
+        Ok(content)
     }
 
     /// Builds one scene; with `checkpoint`, saves one first if the movie

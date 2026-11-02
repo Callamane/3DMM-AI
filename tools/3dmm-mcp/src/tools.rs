@@ -802,7 +802,11 @@ pub fn all_tools() -> Vec<ToolSpec> {
              {\"who\": \"Frank\", \"exits\": \"right\"}, {\"sound\": \"bell service\"}. Walks step around people; \
              throws use physics. subtitles: true captions the dialogue; music picks the score.",
             obj(
-                scene_script_properties(),
+                {
+                    let mut properties = scene_script_properties();
+                    properties["preview"] = json!({"type": "boolean", "default": true, "description": "Return a storyboard of the new scene (one picture) with the result."});
+                    properties
+                },
                 &["background", "cast", "lines"],
             ),
         ),
@@ -818,7 +822,8 @@ pub fn all_tools() -> Vec<ToolSpec> {
                 json!({
                     "scenes": {"type": "array", "minItems": 1, "items": {"type": "object", "properties": scene_script_properties(), "required": ["background", "cast", "lines"]}},
                     "target_seconds": {"type": "number", "minimum": 1},
-                    "export": {"type": "string", "description": "Absolute .mp4 path to export the finished movie to."}
+                    "export": {"type": "string", "description": "Absolute .mp4 path to export the finished movie to."},
+                    "preview": {"type": "boolean", "default": true, "description": "Return a storyboard of the whole movie (one picture) with the result."}
                 }),
                 &["scenes"],
             ),

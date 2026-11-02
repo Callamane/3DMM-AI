@@ -612,6 +612,10 @@ on the way:
   MP4. "Make me a 30-second movie of two guys arguing in a diner" became
   one call: two scenes, 31.5 s, subtitles, music, a throw and an exit,
   built and exported in 7.4 s with no review warnings.
+* `script_scene` and `script_movie` return a storyboard image with their
+  report (the new scene, or the whole movie with `all_scenes`), so the
+  client sees what it made without another call; `preview: false` skips
+  it. A storyboard that can't be drawn doesn't fail the build.
 * `add_text(color: "auto")` renders the 3D picture, averages the
   brightness under the text box and picks dark navy text over bright areas
   (above 0.55) or yellow over dark ones; scripts use it for subtitles and
