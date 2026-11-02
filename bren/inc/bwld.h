@@ -54,6 +54,7 @@ class BWLD : public BWLD_PAR
     bool _fHalfX;                // Render at half horizontal resolution
     bool _fHalfY;                // Render at half vertical resolution
     bool _fWorldChanged;         // Need to rerender?
+    bool _fIgnoreBkgdDepth;      // Render actors as if nothing in the background were in front
     PFNBEGINREND _pfnbeginrend;  // Callback to each actor before rendering
     PFNBACTREND _pfnbactrend;    // Callback when an actor is rendered
     PFNGETRECT _pfngetrect;      // Callback to get an actor's bounding rect
@@ -94,6 +95,13 @@ class BWLD : public BWLD_PAR
         _fWorldChanged = fTrue;
     }
     void MarkRenderedRegn(PGOB pgob, int32_t dxp, int32_t dyp);
+    // When set, the background's depth no longer hides actors (used to
+    // measure how much of an actor the scenery covers). Off by default.
+    void SetIgnoreBackgroundDepth(bool fIgnore)
+    {
+        _fIgnoreBkgdDepth = fIgnore;
+        _fWorldChanged = fTrue;
+    }
 
     // Background stuff
     bool FSetBackground(PCRF pcrf, CTG ctgRGB, CNO cnoRGB, CTG ctgZ, CNO cnoZ);

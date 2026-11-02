@@ -1186,6 +1186,17 @@ void BODY::GetPosition(BRS *pxr, BRS *pyr, BRS *pzr)
     *pzr = _PbactRoot()->t.t.mat.m[3][2];
 }
 
+/***************************************************************************
+    Get the BODY's root transform (orientation and position in the world)
+***************************************************************************/
+void BODY::GetMatrix(BMAT34 *pbmat34)
+{
+    AssertThis(0);
+    AssertVarMem(pbmat34);
+
+    *pbmat34 = _PbactRoot()->t.t.mat;
+}
+
 #ifdef DEBUG
 /***************************************************************************
     Assert the validity of the BODY.

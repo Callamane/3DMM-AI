@@ -589,8 +589,11 @@ void BWLD::_CleanWorkingBuffers(void)
         return;
 
     // Clean the Z buffer
-    _pzbmpBackground->Draw((uint8_t *)_bpmpZ.pixels, _bpmpZ.row_bytes, _bpmpZ.height, 0, 0, &rcClippedRegnBounds,
-                           _pregnDirtyWorking);
+    if (_fIgnoreBkgdDepth)
+        FillPb(_bpmpZ.pixels, LwMul(_bpmpZ.row_bytes, _bpmpZ.height), 0xFF); // farthest
+    else
+        _pzbmpBackground->Draw((uint8_t *)_bpmpZ.pixels, _bpmpZ.row_bytes, _bpmpZ.height, 0, 0, &rcClippedRegnBounds,
+                               _pregnDirtyWorking);
 
     // Clean the RGB buffer
     regsc.Init(_pregnDirtyWorking, &rcClippedRegnBounds);

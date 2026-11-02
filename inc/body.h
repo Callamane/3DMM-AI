@@ -117,6 +117,7 @@ class BODY : public BODY_PAR
     void GetRcBounds(RC *prc);
     void GetCenter(int32_t *pxp, int32_t *pyp);
     void GetPosition(BRS *pxr, BRS *pyr, BRS *pzr);
+    void GetMatrix(BMAT34 *pbmat34);
     bool FPtInBody(int32_t xp, int32_t yp, int32_t *pibset);
     bool FIsInView(void);
 };
