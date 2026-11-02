@@ -31,7 +31,7 @@ void HoldShortShots(const std::vector<int32_t> &vecBeatStart, int32_t nfrmEnd, i
 
 // How well a subject's on-screen height (share of the view height, which
 // can pass 1 when the legs are cropped) suits a shot: 1 at dIdeal, falling
-// to 0 for tiny figures, more gently for ones that overflow the frame
+// to 0 for tiny figures and, faster, for ones pressed against the lens
 double DFramingScore(double dHeightShare, double dIdeal = 0.5);
 
 } // namespace automation

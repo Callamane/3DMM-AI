@@ -84,11 +84,15 @@ void HoldShortShots(const std::vector<int32_t> &vecBeatStart, int32_t nfrmEnd, i
     }
 }
 
+// Past the ideal size the score falls this fast (per ideal-height of excess):
+// a face pressed against the lens reads worse than a figure a little small
+const double kdOversizeFalloff = 1.5;
+
 double DFramingScore(double dHeightShare, double dIdeal)
 {
     if (dHeightShare <= 0 || dIdeal <= 0)
         return 0;
-    double d = dHeightShare < dIdeal ? dHeightShare / dIdeal : 1 - (dHeightShare - dIdeal) / dIdeal * 0.6;
+    double d = dHeightShare < dIdeal ? dHeightShare / dIdeal : 1 - (dHeightShare - dIdeal) / dIdeal * kdOversizeFalloff;
     return std::clamp(d, 0.0, 1.0);
 }
 

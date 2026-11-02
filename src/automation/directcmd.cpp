@@ -46,7 +46,9 @@ const double kdMinShotSecondsDefault = 2;
 const double kdVisibleMinShot = 0.5; // less of the speaker showing is not a shot of them
 const double kdFacingFront = 80;     // degrees from facing the camera that still show the face (3/4 view)
 const double kdFacingSide = 110;     // profile
-const double kdScoreMissing = -3;    // speaker not in shot
+const double kdScoreMissing = -3;
+const double kdLensShare = 0.45;        // another actor covering this much of the frame blocks the shot
+const double kdScoreLensBlocked = -2.5; // speaker not in shot
 
 struct Beat
 {
@@ -64,7 +66,7 @@ static double _DScoreShot(PMVIE pmvie, const std::vector<PACTR> &vecActors, int3
     EnsureRendered(pmvie);
 
     int32_t cOn = 0, cInShot = 0;
-    double dHeightSum = 0, dScoreSpeaker = 0;
+    double dHeightSum = 0, dScoreSpeaker = 0, dBlocking = 0;
     for (size_t i = 0; i < vecActors.size(); i++)
     {
         PACTR pactr = vecActors[i];
@@ -77,6 +79,13 @@ static double _DScoreShot(PMVIE pmvie, const std::vector<PACTR> &vecActors, int3
         {
             pactr->GetRcBounds(&rc);
             ScreenBox box{rc.xpLeft, rc.ypTop, rc.xpRight, rc.ypBottom};
+            // Someone else filling the frame is pressed against the lens
+            RC rcClipped;
+            if (static_cast<int32_t>(i) != iSpeaker && rcClipped.FIntersect(&rc, &rcView) &&
+                static_cast<double>(rcClipped.Dxp()) * rcClipped.Dyp() > kdLensShare * rcView.Dxp() * rcView.Dyp())
+            {
+                dBlocking = kdScoreLensBlocked;
+            }
             fInShot = !FCutOffAtSides(box, rcView.Dxp()) && box.bottom > 0 && box.top < rcView.Dyp();
         }
         if (static_cast<int32_t>(i) == iSpeaker)
@@ -111,12 +120,12 @@ static double _DScoreShot(PMVIE pmvie, const std::vector<PACTR> &vecActors, int3
     {
         // Listeners in the shot help (the audience sees who is talked to)
         int32_t cListeners = cOn - 1;
-        return dScoreSpeaker + (cListeners > 0 ? style.dListenerWeight * cInShot / cListeners : 0);
+        return dScoreSpeaker + dBlocking + (cListeners > 0 ? style.dListenerWeight * cInShot / cListeners : 0);
     }
     // Establishing: everyone in, at a readable size
     if (cOn == 0)
         return 0;
-    return 2.5 * cInShot / cOn + (cInShot > 0 ? DFramingScore(dHeightSum / cInShot) : 0);
+    return dBlocking + 2.5 * cInShot / cOn + (cInShot > 0 ? DFramingScore(dHeightSum / cInShot) : 0);
 }
 
 static bool _FCmdAutoCamera(Request &req)

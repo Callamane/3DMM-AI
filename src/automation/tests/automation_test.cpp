@@ -527,4 +527,6 @@ TEST(AutomationDirecting, FramingPrefersHalfTheFrame)
     // A close single aims taller: legs cropped below the frame are fine
     EXPECT_NEAR(DFramingScore(0.8, 0.8), 1, 1e-9);
     EXPECT_GT(DFramingScore(0.75, 0.8), DFramingScore(0.45, 0.8));
+    // A face filling the frame is worse than a slightly small figure
+    EXPECT_LT(DFramingScore(1.3, 0.8), DFramingScore(0.5, 0.8));
 }
