@@ -2659,6 +2659,13 @@ void APP::_Activate(bool fActive)
 {
     AssertBaseThis(0);
 
+#ifdef AUTOMATION
+    // A bridge-driven app keeps running in the background: suspending on
+    // deactivation would hold commands and playback until someone clicks it
+    if (FAutomationEnabled())
+        return;
+#endif // AUTOMATION
+
     APP_PAR::_Activate(fActive);
 
 #ifdef WIN

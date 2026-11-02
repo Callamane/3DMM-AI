@@ -519,12 +519,13 @@ on the way:
   start in the Studio.
 * Paths on Windows with non-ASCII characters may fail in `render_frame`
   (`fopen` with narrow strings).
-* Open issue: twice in about ten release end-to-end runs (each right after
-  rebuilding the app), `play` with `wait` didn't see playback end: once the
-  old app-clock timeout fired 14 s into the test, once playback was still
-  running after 60 s on the steady clock. Manual repros of the same steps
-  (edits, export_media, then play; window hidden or visible) always finish
-  in ~15 s, and reruns pass. Suspect environment (first launch of a newly
-  signed binary is also slow to start); the test now allows 180 s.
+* Focus loss used to freeze the engine: `APP::_Activate` queues
+  `cidDeactivate`, which suspends every GOK and sits in a modal loop until
+  the window is reactivated. The bridge still answered (idle runs inside the
+  loop), but a queued `cidPlay` never started and playback already running
+  stopped advancing, so `play` with `wait` timed out whenever the app lost
+  focus (e.g. a freshly rebuilt app opening behind the terminal). In
+  automation mode `_Activate` now does nothing; a hidden app plays the
+  30-second diner movie in 33 s, the same as a visible one.
 * Only one 3DMMEx instance can run at a time (stock behaviour), so the MCP
   server can't start a second copy if a non-automation copy is open.

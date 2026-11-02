@@ -1170,10 +1170,24 @@ static bool _FCmdPlay(Request &req)
     if (fWait)
     {
         // Give the queued cidPlay a chance to start before polling
-        req.poll = [](Request &req) {
+        req.poll = [fStarted = false](Request &req) mutable {
             PMVIE pmvie = PmvieCur();
-            if (pmvie != pvNil && !pmvie->FPlaying() && req.MsElapsed() < kdtsSecond)
-                return false;
+            if (pmvie != pvNil && pmvie->FPlaying())
+                fStarted = true;
+            else if (!fStarted)
+            {
+                if (req.MsElapsed() < kdtsSecond)
+                    return false;
+                // Short movies can finish between polls; only a playhead
+                // that never moved means playback didn't start
+                if (pmvie != pvNil && pmvie->Iscen() == req.result.Get("started_scene").AsNumber() &&
+                    pmvie->Pscen()->Nfrm() == req.result.Get("started_frame").AsNumber())
+                {
+                    req.result.Set("finished", false);
+                    req.result.Set("note", "playback did not start");
+                    return true;
+                }
+            }
             return _FPollPlaying(req);
         };
     }
