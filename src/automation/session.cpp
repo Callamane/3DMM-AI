@@ -90,7 +90,8 @@ Json JsonMovieState(PMVIE pmvie)
             pbkgd->GetName(&stn);
             Json jsonBkgd = Json::MakeObject();
             if (pscen->FGetTagBkgd(&tag))
-                jsonBkgd.Set("id", "bkgd:" + std::to_string(tag.sid) + ":" + std::to_string(static_cast<uint32_t>(tag.cno)));
+                jsonBkgd.Set("id",
+                             "bkgd:" + std::to_string(tag.sid) + ":" + std::to_string(static_cast<uint32_t>(tag.cno)));
             jsonBkgd.Set("name", StrFromStn(&stn));
             jsonScene.Set("background", jsonBkgd);
             jsonScene.Set("camera", pbkgd->Icam());

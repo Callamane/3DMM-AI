@@ -349,6 +349,37 @@ every command that takes content also accepts the display name
   (autoplay) switch: caption, walk, camera cut, dissolve and scene 2 all
   play; the app exits normally at the end.
 
+### Making a movie through MCP (Phase 3)
+
+The plan was to give a headless `claude -p` session only this MCP server
+and the request "make me a 30-second movie of two guys arguing in a diner".
+That run could not start: the local Claude Code CLI's OAuth session had
+expired (needs `claude /login` by the user). As the closest substitute, the
+same request was carried out by driving the MCP server over stdio using only
+the tool descriptions, rendering frames to check work. Result: a 2-scene,
+175-frame (29 s) movie with a title, an entrance walk, four synthesized
+lines with Yell/Talk acting, a camera cut, a dissolve, an exit walk and
+"THE END". It plays correctly in the stock build. Friction found and fixed
+on the way:
+
+* Background names are opaque ("MY-Rest Background") → descriptions added,
+  `filter` matches them ("diner").
+* "Walk" is ambiguous/absent for most actors → action matching ignores the
+  `*` marker and ambiguous names return the candidates; guide examples use
+  real names.
+* Some actors can't talk (e.g. Henry has 11 actions) → `list_templates`
+  says to check `list_actions` before casting.
+* "Bino" didn't find "Bino BeGood" → prefix/substring actor names.
+* Dialogue needed audio files the model couldn't make → `speak_line`.
+* No way to see total length for "30 seconds" → `get_state all_scenes`.
+* Screen bounds lagged one render behind → render before describing.
+* **A saved file was incomplete if the app was killed right after saving**
+  (header still in a stdio buffer) → `save_movie` flushes.
+* Text box creation asserted when the Studio's text tools had never been
+  used (font size 0) → engine defaults, 20 px captions.
+* Per-actor recordings replace later actions (stock semantics) → stated in
+  `animate`/`speak_line`/`move_actor` descriptions.
+
 ## 13. Decisions
 
 * **Polling, not threads.** Non-blocking sockets serviced from

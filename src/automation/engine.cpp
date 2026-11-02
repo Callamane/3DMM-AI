@@ -135,7 +135,7 @@ bool FResolveActor(Request &req, const char *pszName, PACTR *ppactr)
         if (*ppactr == pvNil)
         {
             return req.Fail(kszErrNotFound, "no actor with id " + std::to_string(arid) +
-                                                 " in the current scene; use describe_scene to list actors");
+                                                " in the current scene; use describe_scene to list actors");
         }
         return fTrue;
     }
@@ -190,9 +190,9 @@ bool FResolveActor(Request &req, const char *pszName, PACTR *ppactr)
         return req.Fail(kszErrBadArgs, "more than one actor matches '" + json.AsString() +
                                            "'; use the numeric id instead. Actors: " + strNames);
     }
-    return req.Fail(kszErrNotFound, "no actor named '" + json.AsString() + "' in the current scene. " +
-                                        (strNames.empty() ? std::string("The scene has no actors.")
-                                                          : "Actors: " + strNames));
+    return req.Fail(kszErrNotFound,
+                    "no actor named '" + json.AsString() + "' in the current scene. " +
+                        (strNames.empty() ? std::string("The scene has no actors.") : "Actors: " + strNames));
 }
 
 /***************************************************************************
@@ -291,8 +291,9 @@ bool FParsePosition(Request &req, const Json &json, const StageFrame &stage, Vec
 
     if (!json.IsObject())
     {
-        return req.Fail(kszErrBadArgs,
-                        "a position must be {\"x\": metres right, \"z\": metres away from camera} or {\"world\": [x,y,z]}");
+        return req.Fail(
+            kszErrBadArgs,
+            "a position must be {\"x\": metres right, \"z\": metres away from camera} or {\"world\": [x,y,z]}");
     }
 
     const Json &jsonWorld = json.Get("world");
@@ -360,7 +361,8 @@ bool FGotoFrame(Request &req, PSCEN pscen, int32_t nfrm)
 {
     if (nfrm < pscen->NfrmFirst())
     {
-        return req.Fail(kszErrBadArgs, "frame " + std::to_string(nfrm) + " is before the start of the scene (first frame is " +
+        return req.Fail(kszErrBadArgs, "frame " + std::to_string(nfrm) +
+                                           " is before the start of the scene (first frame is " +
                                            std::to_string(pscen->NfrmFirst()) + ")");
     }
     if (nfrm == pscen->Nfrm())

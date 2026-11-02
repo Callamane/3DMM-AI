@@ -22,10 +22,10 @@ struct NamedColor
 };
 
 static const NamedColor _rgnamedcolor[] = {
-    {"black", 0, 0, 0},         {"white", 255, 255, 255}, {"red", 220, 20, 20},     {"green", 20, 160, 40},
-    {"blue", 30, 60, 220},      {"yellow", 255, 230, 0},  {"orange", 255, 140, 0},  {"purple", 140, 40, 180},
-    {"pink", 255, 120, 180},    {"brown", 120, 70, 30},   {"gray", 128, 128, 128},  {"grey", 128, 128, 128},
-    {"cyan", 0, 200, 220},      {"magenta", 220, 0, 200}, {"navy", 10, 20, 100},    {"gold", 230, 180, 30},
+    {"black", 0, 0, 0},      {"white", 255, 255, 255}, {"red", 220, 20, 20},    {"green", 20, 160, 40},
+    {"blue", 30, 60, 220},   {"yellow", 255, 230, 0},  {"orange", 255, 140, 0}, {"purple", 140, 40, 180},
+    {"pink", 255, 120, 180}, {"brown", 120, 70, 30},   {"gray", 128, 128, 128}, {"grey", 128, 128, 128},
+    {"cyan", 0, 200, 220},   {"magenta", 220, 0, 200}, {"navy", 10, 20, 100},   {"gold", 230, 180, 30},
 };
 
 // Maps a color to the nearest entry in the current 8-bit palette. Text in
@@ -69,7 +69,8 @@ static bool _FParseColor(Request &req, const Json &json, ACR *pacr)
         b = static_cast<int>(json.AsArray()[2].AsNumber());
     }
     if (r < 0 || r > 255 || g < 0 || g > 255 || b < 0 || b > 255)
-        return req.Fail(kszErrBadArgs, "colors must be \"#rrggbb\", a name (red, white, ...), [r,g,b] or \"transparent\"");
+        return req.Fail(kszErrBadArgs,
+                        "colors must be \"#rrggbb\", a name (red, white, ...), [r,g,b] or \"transparent\"");
 
     PGL pglclr = GPT::PglclrGetPalette();
     if (pglclr == pvNil)
@@ -465,8 +466,8 @@ static bool _FCmdAttachSound(Request &req)
     bool fScene = jsonTarget.IsNull() || (jsonTarget.IsString() && StrLower(jsonTarget.AsString()) == "scene");
     if (fScene)
     {
-        if (!pmvie->FAddBkgdSnd(&tag, fLoop ? tribool::tYes : tribool::tNo, fQueue ? tribool::tYes : tribool::tNo,
-                                vlm, styNil))
+        if (!pmvie->FAddBkgdSnd(&tag, fLoop ? tribool::tYes : tribool::tNo, fQueue ? tribool::tYes : tribool::tNo, vlm,
+                                styNil))
         {
             return FFailEngine(req, "could not add the sound to the scene");
         }

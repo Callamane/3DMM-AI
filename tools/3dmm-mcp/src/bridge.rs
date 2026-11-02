@@ -50,7 +50,9 @@ impl BridgeClient {
             writer: write,
             next_id: 1,
         };
-        let hello = client.call("hello", json!({}), Duration::from_secs(10)).await?;
+        let hello = client
+            .call("hello", json!({}), Duration::from_secs(10))
+            .await?;
         let version = hello.get("protocol").and_then(Value::as_i64).unwrap_or(0);
         if version != PROTOCOL_VERSION {
             bail!("3DMMEx speaks bridge protocol {version}, this server needs {PROTOCOL_VERSION}");
@@ -86,9 +88,12 @@ impl BridgeClient {
                 return Ok(reply);
             }
         };
-        let reply = tokio::time::timeout(timeout, read)
-            .await
-            .map_err(|_| anyhow!("3DMMEx did not answer '{cmd}' within {}s", timeout.as_secs()))??;
+        let reply = tokio::time::timeout(timeout, read).await.map_err(|_| {
+            anyhow!(
+                "3DMMEx did not answer '{cmd}' within {}s",
+                timeout.as_secs()
+            )
+        })??;
 
         if reply.get("ok").and_then(Value::as_bool) == Some(true) {
             return Ok(reply.get("result").cloned().unwrap_or(Value::Null));

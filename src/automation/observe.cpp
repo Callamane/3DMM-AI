@@ -245,8 +245,8 @@ static bool _FCmdExportFrames(Request &req)
     req.result.Set("to", nfrmTo);
     req.result.Set("frames_per_second", kfps / dnfrm);
     req.result.Set("sample_paths", jsonFiles);
-    req.result.Set("pattern", _StrJoin(strDir, strPrefix + "_s" + (iscen < 10 ? "0" : "") + std::to_string(iscen) +
-                                                   "_%04d.png"));
+    req.result.Set("pattern",
+                   _StrJoin(strDir, strPrefix + "_s" + (iscen < 10 ? "0" : "") + std::to_string(iscen) + "_%04d.png"));
     return fTrue;
 }
 
@@ -270,8 +270,8 @@ static Json _JsonVisibleFloor(const StageFrame &stage, const CameraModel &camera
         const char *psz;
         double xp, yp;
     } rgpt[] = {
-        {"bottom_left", 0, dyp * 0.95},   {"bottom_center", dxp / 2, dyp * 0.95}, {"bottom_right", dxp, dyp * 0.95},
-        {"middle_left", 0, dyp * 0.6},    {"middle_center", dxp / 2, dyp * 0.6},  {"middle_right", dxp, dyp * 0.6},
+        {"bottom_left", 0, dyp * 0.95}, {"bottom_center", dxp / 2, dyp * 0.95}, {"bottom_right", dxp, dyp * 0.95},
+        {"middle_left", 0, dyp * 0.6},  {"middle_center", dxp / 2, dyp * 0.6},  {"middle_right", dxp, dyp * 0.6},
     };
     for (auto &pt : rgpt)
     {

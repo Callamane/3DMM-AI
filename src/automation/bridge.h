@@ -20,12 +20,12 @@ const int32_t kProtocolVersion = 1;
 const uint16_t kportDefault = 7341;
 
 // Error codes returned in {"error": {"code": ...}}
-extern const char *const kszErrBadArgs;      // missing/invalid argument
-extern const char *const kszErrNotFound;     // unknown id/name
-extern const char *const kszErrBadState;     // e.g. no movie, no scene, playing
-extern const char *const kszErrEngine;       // the engine refused or failed
-extern const char *const kszErrUnknownCmd;   // no such command
-extern const char *const kszErrIo;           // file system error
+extern const char *const kszErrBadArgs;    // missing/invalid argument
+extern const char *const kszErrNotFound;   // unknown id/name
+extern const char *const kszErrBadState;   // e.g. no movie, no scene, playing
+extern const char *const kszErrEngine;     // the engine refused or failed
+extern const char *const kszErrUnknownCmd; // no such command
+extern const char *const kszErrIo;         // file system error
 
 /***************************************************************************
     A request being processed. Handlers fill result (on success) or call

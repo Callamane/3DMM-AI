@@ -32,7 +32,12 @@ pub async fn synthesize(text: &str, voice: Option<&str>) -> Result<PathBuf> {
             command.arg("-v").arg(voice);
         }
         // "--" so lines starting with '-' aren't taken as options
-        command.arg("--").arg(text).status().await.context("running `say`")?
+        command
+            .arg("--")
+            .arg(text)
+            .status()
+            .await
+            .context("running `say`")?
     } else if cfg!(target_os = "windows") {
         // Text and path are passed through the environment, never spliced
         // into the script
@@ -48,14 +53,19 @@ pub async fn synthesize(text: &str, voice: Option<&str>) -> Result<PathBuf> {
         if let Some(voice) = voice {
             command.env("TDMM_VOICE", voice);
         }
-        command.status().await.context("running PowerShell speech synthesis")?
+        command
+            .status()
+            .await
+            .context("running PowerShell speech synthesis")?
     } else {
         bail!("speak_line needs macOS (`say`) or Windows (SAPI); import a WAV with import_sound instead");
     };
     if !status.success() {
         bail!(
             "speech synthesis failed{}",
-            voice.map(|v| format!(" (is '{v}' an installed voice?)")).unwrap_or_default()
+            voice
+                .map(|v| format!(" (is '{v}' an installed voice?)"))
+                .unwrap_or_default()
         );
     }
     Ok(path)

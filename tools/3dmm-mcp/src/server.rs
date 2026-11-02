@@ -9,8 +9,8 @@ use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, GetPromptRequestParams,
     GetPromptResponse, GetPromptResult, Implementation, ListPromptsResult, ListResourcesResult,
     ListToolsResult, PaginatedRequestParams, Prompt, PromptArgument, PromptMessage,
-    ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult, Resource, ResourceContents,
-    Role, ServerCapabilities, ServerConfig, Tool,
+    ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult, Resource,
+    ResourceContents, Role, ServerCapabilities, ServerConfig, Tool,
 };
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData as McpError, RoleServer, ServerHandler};
@@ -75,7 +75,12 @@ impl ThreeDmmServer {
         Ok(guard.as_mut().expect("client was just set"))
     }
 
-    async fn bridge_call(&self, cmd: &str, args: Value, timeout: Duration) -> anyhow::Result<Value> {
+    async fn bridge_call(
+        &self,
+        cmd: &str,
+        args: Value,
+        timeout: Duration,
+    ) -> anyhow::Result<Value> {
         let mut guard = self.client.lock().await;
         let client = self.ensure_connected(&mut guard).await?;
         let result = client.call(cmd, args, timeout).await;
@@ -90,16 +95,29 @@ impl ThreeDmmServer {
     }
 
     async fn launch(&self) -> anyhow::Result<Value> {
-        let state = self.bridge_call("get_state", json!({}), Duration::from_secs(30)).await?;
+        let state = self
+            .bridge_call("get_state", json!({}), Duration::from_secs(30))
+            .await?;
         if state.get("screen").and_then(Value::as_str) != Some("studio") {
-            self.bridge_call("goto_studio", json!({}), Duration::from_secs(120)).await?;
-            return self.bridge_call("get_state", json!({}), Duration::from_secs(30)).await;
+            self.bridge_call("goto_studio", json!({}), Duration::from_secs(120))
+                .await?;
+            return self
+                .bridge_call("get_state", json!({}), Duration::from_secs(30))
+                .await;
         }
         Ok(state)
     }
 
-    async fn speak_line(&self, args: Value, timeout: Duration) -> anyhow::Result<Vec<ContentBlock>> {
-        let text = args.get("text").and_then(Value::as_str).unwrap_or_default().to_string();
+    async fn speak_line(
+        &self,
+        args: Value,
+        timeout: Duration,
+    ) -> anyhow::Result<Vec<ContentBlock>> {
+        let text = args
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
         let voice = args.get("voice").and_then(Value::as_str);
         let actor = args.get("actor").cloned().unwrap_or(Value::Null);
         let action = args.get("action").cloned().unwrap_or_else(|| json!("Talk"));
@@ -108,7 +126,11 @@ impl ThreeDmmServer {
         let seconds = speech::wav_seconds(&wav)?;
         let label: String = text.chars().take(40).collect();
         let imported = self
-            .bridge_call("import_sound", json!({"path": wav, "type": "speech", "name": label}), timeout)
+            .bridge_call(
+                "import_sound",
+                json!({"path": wav, "type": "speech", "name": label}),
+                timeout,
+            )
             .await?;
         let _ = std::fs::remove_file(&wav);
         let sound_id = imported["sound_id"].clone();
@@ -209,7 +231,9 @@ impl ServerHandler for ThreeDmmServer {
     }
 
     fn get_tool(&self, name: &str) -> Option<Tool> {
-        self.by_name.get(name).map(|&i| tool_definition(&self.tools[i]))
+        self.by_name
+            .get(name)
+            .map(|&i| tool_definition(&self.tools[i]))
     }
 
     async fn call_tool(
@@ -218,7 +242,10 @@ impl ServerHandler for ThreeDmmServer {
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
         let Some(&index) = self.by_name.get(request.name.as_ref()) else {
-            return Err(McpError::invalid_params(format!("unknown tool '{}'", request.name), None));
+            return Err(McpError::invalid_params(
+                format!("unknown tool '{}'", request.name),
+                None,
+            ));
         };
         let spec = &self.tools[index];
         let args = Value::Object(request.arguments.unwrap_or_default());
@@ -255,7 +282,10 @@ impl ServerHandler for ThreeDmmServer {
         _context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, McpError> {
         if request.uri != GUIDE_URI {
-            return Err(McpError::resource_not_found(format!("no resource {}", request.uri), None));
+            return Err(McpError::resource_not_found(
+                format!("no resource {}", request.uri),
+                None,
+            ));
         }
         Ok(ReadResourceResult::new(vec![ResourceContents::text(WORKFLOW_GUIDE, GUIDE_URI)]).into())
     }
@@ -280,7 +310,10 @@ impl ServerHandler for ThreeDmmServer {
         _context: RequestContext<RoleServer>,
     ) -> Result<GetPromptResponse, McpError> {
         if request.name != "make_movie" {
-            return Err(McpError::invalid_params(format!("no prompt {}", request.name), None));
+            return Err(McpError::invalid_params(
+                format!("no prompt {}", request.name),
+                None,
+            ));
         }
         let idea = request
             .arguments
@@ -292,8 +325,10 @@ impl ServerHandler for ThreeDmmServer {
             "Make a short movie in 3D Movie Maker: {idea}.\n\nFollow this workflow, rendering frames to check your \
              work as you go, and save the result as a .3mm file.\n\n{WORKFLOW_GUIDE}"
         );
-        Ok(GetPromptResult::new(vec![PromptMessage::new_text(Role::User, text)])
-            .with_description("Make a 3D Movie Maker movie")
-            .into())
+        Ok(
+            GetPromptResult::new(vec![PromptMessage::new_text(Role::User, text)])
+                .with_description("Make a 3D Movie Maker movie")
+                .into(),
+        )
     }
 }

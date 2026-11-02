@@ -179,7 +179,6 @@ static void _AddActorUndo(Request &req, PMVIE pmvie, PACTR pactr)
     Positioning
 ***************************************************************************/
 
-
 // Translates the actor's whole current subroute so it stands at target.
 // fKeepHeight: only move in x/z (3D words float above the floor).
 static bool _FTeleport(PACTR pactr, const Vec3 &target, bool fKeepHeight)
@@ -202,7 +201,8 @@ static bool _FFacingDegrees(Request &req, const Json &json, double *pdeg)
         return fTrue;
     }
     if (!json.IsString())
-        return req.Fail(kszErrBadArgs, "'facing' must be \"camera\", \"away\", \"left\", \"right\" or a number of degrees");
+        return req.Fail(kszErrBadArgs,
+                        "'facing' must be \"camera\", \"away\", \"left\", \"right\" or a number of degrees");
     std::string str = StrLower(json.AsString());
     if (str == "camera" || str == "front" || str == "toward_camera")
         *pdeg = 0;
@@ -213,7 +213,8 @@ static bool _FFacingDegrees(Request &req, const Json &json, double *pdeg)
     else if (str == "right" || str == "screen_right")
         *pdeg = 90;
     else
-        return req.Fail(kszErrBadArgs, "'facing' must be \"camera\", \"away\", \"left\", \"right\" or a number of degrees");
+        return req.Fail(kszErrBadArgs,
+                        "'facing' must be \"camera\", \"away\", \"left\", \"right\" or a number of degrees");
     return fTrue;
 }
 
@@ -327,8 +328,8 @@ static bool _FCmdAdd3dWord(Request &req)
     }
     else if (jsonShape.IsString())
     {
-        static const char *const rgpsz[] = {"normal",   "arch",     "circle",     "large middle", "arch down",
-                                            "arch z",   "circle z", "vertical",   "grow right",   "grow left"};
+        static const char *const rgpsz[] = {"normal", "arch",     "circle",   "large middle", "arch down",
+                                            "arch z", "circle z", "vertical", "grow right",   "grow left"};
         tdts = tdtsNil;
         for (int32_t i = 0; i < tdtsLim; i++)
         {
@@ -436,7 +437,8 @@ static bool _FCmdSetAction(Request &req)
     PSCEN pscen = pactr->Pscen();
     if (!FRequireNotPlaying(req, pscen->Pmvie()) || !FApplyFrameArg(req, pscen))
         return fFalse;
-    if (!FResolveAction(req, pactr->Ptmpl(), req.args.Get("action"), &anid) || !req.FArgBool("freeze", &fFreeze, fFalse))
+    if (!FResolveAction(req, pactr->Ptmpl(), req.args.Get("action"), &anid) ||
+        !req.FArgBool("freeze", &fFreeze, fFalse))
         return fFalse;
     if (!pactr->FOnStage())
         return req.Fail(kszErrBadState, "the actor is not on stage at frame " + std::to_string(pscen->Nfrm()));
@@ -523,8 +525,8 @@ static bool _FRecordToward(Request &req, RecordState *prs, const Vec3 &target, d
         Vec3 dPass = d.Normalized() * dwrPass;
 
         bool fStepFrm = fFalse, fStepRte = fFalse;
-        if (!pactr->FRecordMove(BrsFromD(dPass.x), rZero, BrsFromD(dPass.z), fmafGround, prs->ts, &fStepFrm,
-                                &fStepRte, prs->pactrRestore))
+        if (!pactr->FRecordMove(BrsFromD(dPass.x), rZero, BrsFromD(dPass.z), fmafGround, prs->ts, &fStepFrm, &fStepRte,
+                                prs->pactrRestore))
         {
             return FFailEngine(req, "recording the path failed");
         }
@@ -542,8 +544,7 @@ static bool _FRecordInPlace(Request &req, RecordState *prs, int32_t cfrm)
     {
         bool fStepFrm = fFalse, fStepRte = fFalse;
         prs->ts += kdtsInPlaceFrame;
-        if (!prs->pactr->FRecordMove(rZero, rZero, rZero, fmafGround, prs->ts, &fStepFrm, &fStepRte,
-                                     prs->pactrRestore))
+        if (!prs->pactr->FRecordMove(rZero, rZero, rZero, fmafGround, prs->ts, &fStepFrm, &fStepRte, prs->pactrRestore))
         {
             return FFailEngine(req, "recording failed");
         }
@@ -660,8 +661,7 @@ static bool _FCmdMoveActor(Request &req)
     req.result.Set("end_frame", pscen->Nfrm());
     req.result.Set("frames", pscen->Nfrm() - nfrmStart);
     req.result.Set("seconds", static_cast<double>(pscen->Nfrm() - nfrmStart) / kfps);
-    req.result.Set("distance_metres",
-                   std::floor((_XyzWorld(pactr) - start).Length() / kdwrPerMetre * 100 + 0.5) / 100);
+    req.result.Set("distance_metres", std::floor((_XyzWorld(pactr) - start).Length() / kdwrPerMetre * 100 + 0.5) / 100);
     req.result.Set("action", StrActionName(pactr->Ptmpl(), anid));
     req.result.Set("note", "the actor stops (freezes) at the end of the path; the scene's current frame is now the "
                            "last frame of the path. Speed is set by the action: use a faster action (e.g. run) to "
@@ -703,7 +703,8 @@ static bool _FCmdAnimate(Request &req)
         return req.Fail(kszErrBadArgs, "pass 'frames' or 'seconds'");
     }
     if (cfrm < 1 || cfrm > kcfrmPathMax)
-        return req.Fail(kszErrBadArgs, "duration must be between 1 frame and " + std::to_string(kcfrmPathMax) + " frames");
+        return req.Fail(kszErrBadArgs,
+                        "duration must be between 1 frame and " + std::to_string(kcfrmPathMax) + " frames");
 
     anid = pactr->AnidCur();
     if (req.FHasArg("action") && !FResolveAction(req, pactr->Ptmpl(), req.args.Get("action"), &anid))
@@ -804,7 +805,8 @@ static bool _FCmdRotateActor(Request &req)
     if (req.FHasArg("facing") && !_FFacingDegrees(req, req.args.Get("facing"), &degY))
         return fFalse;
     if (degX == 0 && degY == 0 && degZ == 0)
-        return req.Fail(kszErrBadArgs, "pass 'turn' (degrees, positive = counter-clockwise seen from above), 'tilt' or 'roll'");
+        return req.Fail(kszErrBadArgs,
+                        "pass 'turn' (degrees, positive = counter-clockwise seen from above), 'tilt' or 'roll'");
     if (!pactr->FOnStage())
         return req.Fail(kszErrBadState, "the actor is not on stage at frame " + std::to_string(pscen->Nfrm()));
 
@@ -829,8 +831,9 @@ static bool _FCmdScaleActor(Request &req)
     if (!FRequireNotPlaying(req, pscen->Pmvie()) || !FApplyFrameArg(req, pscen))
         return fFalse;
     if (rScale < 0.1 || rScale > 10)
-        return req.Fail(kszErrBadArgs, "'factor' must be between 0.1 and 10 (it multiplies the current size; total size is "
-                                       "limited to 0.25x-10x)");
+        return req.Fail(kszErrBadArgs,
+                        "'factor' must be between 0.1 and 10 (it multiplies the current size; total size is "
+                        "limited to 0.25x-10x)");
     if (!_FEditActor(req, pactr, "resize the actor", [&]() { return pactr->FScale(BrsFromD(rScale)); }))
         return fFalse;
     req.result.Set("actor", _JsonActorNow(pscen->Pmvie(), pactr));
@@ -932,8 +935,8 @@ static bool _FCmdActorLifetime(Request &req)
         // sooner/later tool)
         if (!FRequireNotPlaying(req, pmvie) || !req.FArgInt("shift_frames", &dnfrm))
             return fFalse;
-        if (dnfrm != 0 && !_FEditActor(req, pactr, "shift the actor in time",
-                                       [&]() { return pactr->FSoonerLater(dnfrm); }))
+        if (dnfrm != 0 &&
+            !_FEditActor(req, pactr, "shift the actor in time", [&]() { return pactr->FSoonerLater(dnfrm); }))
         {
             return fFalse;
         }

@@ -289,8 +289,7 @@ class JsonParser
         if (_ich >= _str.size() || !(_str[_ich] >= '0' && _str[_ich] <= '9'))
             return _Fail("invalid number");
         while (_ich < _str.size() && ((_str[_ich] >= '0' && _str[_ich] <= '9') || _str[_ich] == '.' ||
-                                      _str[_ich] == 'e' || _str[_ich] == 'E' || _str[_ich] == '+' ||
-                                      _str[_ich] == '-'))
+                                      _str[_ich] == 'e' || _str[_ich] == 'E' || _str[_ich] == '+' || _str[_ich] == '-'))
         {
             _ich++;
         }

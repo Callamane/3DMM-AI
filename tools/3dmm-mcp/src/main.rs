@@ -28,7 +28,8 @@ async fn main() -> Result<()> {
             .with_context(|| format!("THREEDMM_PORT={value} is not a port number"))?,
         Err(_) => DEFAULT_PORT,
     };
-    let autolaunch = std::env::var("THREEDMM_NO_AUTOLAUNCH").map_or(true, |v| v.is_empty() || v == "0");
+    let autolaunch =
+        std::env::var("THREEDMM_NO_AUTOLAUNCH").map_or(true, |v| v.is_empty() || v == "0");
 
     let service = ThreeDmmServer::new(port, autolaunch)
         .serve(rmcp::transport::stdio())

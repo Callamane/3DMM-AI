@@ -17,8 +17,9 @@ TEST(AutomationJson, ParsesRequest)
 {
     Json json;
     std::string strError;
-    ASSERT_TRUE(Json::FParse(R"({"id": 7, "cmd": "add_actor", "args": {"template": "Ron", "position": {"x": -1.5, "z": 2}}})",
-                             &json, &strError))
+    ASSERT_TRUE(
+        Json::FParse(R"({"id": 7, "cmd": "add_actor", "args": {"template": "Ron", "position": {"x": -1.5, "z": 2}}})",
+                     &json, &strError))
         << strError;
     EXPECT_EQ(json.Get("id").AsNumber(), 7);
     EXPECT_EQ(json.Get("cmd").AsString(), "add_actor");
@@ -32,8 +33,8 @@ TEST(AutomationJson, RoundTripsStringsAndUnicode)
 {
     Json json;
     std::string strError;
-    ASSERT_TRUE(Json::FParse(R"(["a\"b\\c\n", "caf\u00e9", "\ud83c\udfac", true, false, null, 1e3, -0.25])", &json,
-                             &strError))
+    ASSERT_TRUE(
+        Json::FParse(R"(["a\"b\\c\n", "caf\u00e9", "\ud83c\udfac", true, false, null, 1e3, -0.25])", &json, &strError))
         << strError;
     ASSERT_EQ(json.Size(), 8u);
     EXPECT_EQ(json.AsArray()[0].AsString(), "a\"b\\c\n");
@@ -46,8 +47,8 @@ TEST(AutomationJson, RejectsMalformed)
 {
     Json json;
     std::string strError;
-    for (const char *psz : {"", "{", "{\"a\":}", "[1,]", "{\"a\" 1}", "tru", "\"unterminated", "[1] 2",
-                            "\"\\ud800\"", "{1:2}"})
+    for (const char *psz :
+         {"", "{", "{\"a\":}", "[1,]", "{\"a\" 1}", "tru", "\"unterminated", "[1] 2", "\"\\ud800\"", "{1:2}"})
     {
         EXPECT_FALSE(Json::FParse(psz, &json, &strError)) << psz;
         EXPECT_FALSE(strError.empty());
@@ -155,7 +156,7 @@ TEST(AutomationStage, RotatedCameraKeepsScreenRight)
     stage.Init(camera, Vec3(50, 0, 0));
 
     Vec3 world = stage.ToWorld(Vec3(1, 0, 1));
-    EXPECT_NEAR(world.x, 40, 1e-9); // 1 m further from the camera
+    EXPECT_NEAR(world.x, 40, 1e-9);  // 1 m further from the camera
     EXPECT_NEAR(world.z, -10, 1e-9); // 1 m to screen right
 
     double xpLeft, xpRight, yp;

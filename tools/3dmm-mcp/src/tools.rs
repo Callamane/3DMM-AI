@@ -32,7 +32,8 @@ spot where 3D Movie Maker drops new actors for this camera, usually centre stage
 visible floor area; staying within roughly x -2..2 and z 0..3 keeps actors in shot for most cameras (check with \
 render_frame). Escape hatch: {\"world\": [x, y, z]} in raw engine units (10 units = 1 m).";
 
-const FRAMES: &str = "Movies run at 6 frames per second. Each scene has its own frame numbers starting at 1.";
+const FRAMES: &str =
+    "Movies run at 6 frames per second. Each scene has its own frame numbers starting at 1.";
 
 fn position_schema(desc: &str) -> Value {
     json!({

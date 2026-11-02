@@ -15,7 +15,8 @@ static bool _FSetCamera(Request &req, PMVIE pmvie, int32_t icam)
     PBKGD pbkgd = pmvie->Pscen()->Pbkgd();
     if (icam < 0 || icam >= pbkgd->Ccam())
     {
-        return req.Fail(kszErrBadArgs, "camera " + std::to_string(icam) + " does not exist; this background has cameras 0-" +
+        return req.Fail(kszErrBadArgs, "camera " + std::to_string(icam) +
+                                           " does not exist; this background has cameras 0-" +
                                            std::to_string(pbkgd->Ccam() - 1));
     }
     if (icam == pbkgd->Icam())
@@ -127,8 +128,11 @@ static bool _FCmdSetTransition(Request &req)
         const char *psz;
         TRANS trans;
     } _rgtrans[] = {
-        {"cut", transCut},       {"fade_to_black", transFadeToBlack}, {"fade_to_white", transFadeToWhite},
-        {"dissolve", transDissolve}, {"black", transBlack},
+        {"cut", transCut},
+        {"fade_to_black", transFadeToBlack},
+        {"fade_to_white", transFadeToWhite},
+        {"dissolve", transDissolve},
+        {"black", transBlack},
     };
 
     if (!FRequireScene(req, &pmvie, &pscen) || !FRequireNotPlaying(req, pmvie) ||
@@ -148,8 +152,7 @@ static bool _FCmdSetTransition(Request &req)
             return fTrue;
         }
     }
-    return req.Fail(kszErrBadArgs,
-                    "'transition' must be one of: cut, fade_to_black, fade_to_white, dissolve, black");
+    return req.Fail(kszErrBadArgs, "'transition' must be one of: cut, fade_to_black, fade_to_white, dissolve, black");
 }
 
 static bool _FCmdDeleteScene(Request &req)

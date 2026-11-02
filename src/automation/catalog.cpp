@@ -621,8 +621,8 @@ static bool _FCmdListSounds(Request &req)
 }
 
 static const char *const _rgpszTdtShape[] = {
-    "normal", "arch", "circle", "large middle", "arch down", "arch z", "circle z", "vertical", "grow right",
-    "grow left",
+    "normal", "arch",     "circle",   "large middle", "arch down",
+    "arch z", "circle z", "vertical", "grow right",   "grow left",
 };
 
 static bool _FCmdList3dWordStyles(Request &req)

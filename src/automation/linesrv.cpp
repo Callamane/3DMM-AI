@@ -110,8 +110,8 @@ bool LineServer::FStart(uint16_t port, std::string *pstrError)
 
     if (bind(sock, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0)
     {
-        *pstrError = "cannot bind 127.0.0.1:" + std::to_string(port) + " (error " +
-                     std::to_string(_LastSockError()) + "; is another 3DMMEx already listening?)";
+        *pstrError = "cannot bind 127.0.0.1:" + std::to_string(port) + " (error " + std::to_string(_LastSockError()) +
+                     "; is another 3DMMEx already listening?)";
         _CloseSock(sock);
         return false;
     }
@@ -259,8 +259,8 @@ void LineServer::Flush()
 {
     while (_sockClient != -1 && !_strOut.empty())
     {
-        int cb = static_cast<int>(send(_Sock(_sockClient), _strOut.data(), static_cast<int>(_strOut.size()),
-                                       MSG_NOSIGNAL));
+        int cb =
+            static_cast<int>(send(_Sock(_sockClient), _strOut.data(), static_cast<int>(_strOut.size()), MSG_NOSIGNAL));
         if (cb > 0)
         {
             _strOut.erase(0, cb);

@@ -73,7 +73,10 @@ fn out_dir() -> Result<PathBuf> {
 
 fn png_ok(path: &str) -> Result<()> {
     let bytes = std::fs::read(path).with_context(|| format!("reading {path}"))?;
-    ensure!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"), "{path} is not a PNG");
+    ensure!(
+        bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "{path} is not a PNG"
+    );
     ensure!(bytes.len() > 10_000, "{path} is suspiciously small");
     Ok(())
 }
@@ -92,49 +95,105 @@ async fn builds_saves_and_reopens_a_two_scene_movie() -> Result<()> {
     let mut s = Session { client };
 
     let state = s.call("get_state", json!({})).await?;
-    ensure!(state["screen"] == "studio", "automation should start in the Studio: {state}");
-    s.call("new_movie", json!({"discard_changes": true})).await?;
+    ensure!(
+        state["screen"] == "studio",
+        "automation should start in the Studio: {state}"
+    );
+    s.call("new_movie", json!({"discard_changes": true}))
+        .await?;
 
     // ---- Scene 1: an actor walks across the floor and stops; caption; camera change
-    s.call("add_scene", json!({"background": "MY-Rest", "camera": 0})).await?;
-    let added = s
-        .call("add_actor", json!({"template": "Billy", "name": "Walker", "position": {"x": -2, "z": 1.5}}))
+    s.call("add_scene", json!({"background": "MY-Rest", "camera": 0}))
         .await?;
-    ensure!(added["actor"]["position"]["stage"]["x"].as_f64().unwrap() < -1.9, "placed at x=-2: {added}");
+    let added = s
+        .call(
+            "add_actor",
+            json!({"template": "Billy", "name": "Walker", "position": {"x": -2, "z": 1.5}}),
+        )
+        .await?;
+    ensure!(
+        added["actor"]["position"]["stage"]["x"].as_f64().unwrap() < -1.9,
+        "placed at x=-2: {added}"
+    );
     let walk = s
-        .call("move_actor", json!({"actor": "Walker", "action": "Walk Fast", "path": [{"x": 2, "z": 1.5}]}))
+        .call(
+            "move_actor",
+            json!({"actor": "Walker", "action": "Walk Fast", "path": [{"x": 2, "z": 1.5}]}),
+        )
         .await?;
     let arrive = walk["end_frame"].as_i64().unwrap();
-    ensure!(walk["distance_metres"].as_f64().unwrap() > 3.5, "walked across: {walk}");
+    ensure!(
+        walk["distance_metres"].as_f64().unwrap() > 3.5,
+        "walked across: {walk}"
+    );
     ensure!(arrive > 10, "walking 4 m takes more than 10 frames: {walk}");
     s.call(
         "add_text",
         json!({"text": "Scene 1: the long walk", "kind": "caption", "rect": "top", "frame": 1, "until_frame": 12}),
     )
     .await?;
-    s.call("set_camera", json!({"camera": 2, "frame": arrive / 2})).await?;
+    s.call("set_camera", json!({"camera": 2, "frame": arrive / 2}))
+        .await?;
 
     let scene1 = s.call("describe_scene", json!({"frame": arrive})).await?;
-    ensure!(scene1["scene"]["last_frame"].as_i64().unwrap() >= arrive, "{scene1}");
+    ensure!(
+        scene1["scene"]["last_frame"].as_i64().unwrap() >= arrive,
+        "{scene1}"
+    );
     let walker = &scene1["actors"][0];
-    ensure!(walker["frozen"] == true, "actor stops at the end of the path: {walker}");
-    ensure!(scene1["text_boxes"].as_array().unwrap().len() == 1, "one caption: {scene1}");
-    s.call("set_transition", json!({"transition": "dissolve"})).await?;
+    ensure!(
+        walker["frozen"] == true,
+        "actor stops at the end of the path: {walker}"
+    );
+    ensure!(
+        scene1["text_boxes"].as_array().unwrap().len() == 1,
+        "one caption: {scene1}"
+    );
+    s.call("set_transition", json!({"transition": "dissolve"}))
+        .await?;
 
     // ---- Scene 2: two actors, different actions, background sound, imported WAV on an actor
-    s.call("add_scene", json!({"background": "MY-Rest", "camera": 1})).await?;
+    s.call("add_scene", json!({"background": "MY-Rest", "camera": 1}))
+        .await?;
     s.call("add_actor", json!({"template": "Billy", "name": "Al", "position": {"x": -1, "z": 1}, "facing": "right"}))
         .await?;
-    s.call("add_actor", json!({"template": "Bino", "name": "Bo", "position": {"x": 1, "z": 1}, "facing": "left"}))
-        .await?;
-    s.call("animate", json!({"actor": "Al", "action": "Mad, Sad", "seconds": 3, "frame": 1})).await?;
-    s.call("animate", json!({"actor": "Bo", "action": "Laugh", "seconds": 3, "frame": 1})).await?;
+    s.call(
+        "add_actor",
+        json!({"template": "Bino", "name": "Bo", "position": {"x": 1, "z": 1}, "facing": "left"}),
+    )
+    .await?;
+    s.call(
+        "animate",
+        json!({"actor": "Al", "action": "Mad, Sad", "seconds": 3, "frame": 1}),
+    )
+    .await?;
+    s.call(
+        "animate",
+        json!({"actor": "Bo", "action": "Laugh", "seconds": 3, "frame": 1}),
+    )
+    .await?;
     let sounds = s.call("list_sounds", json!({"type": "music"})).await?;
-    let music = sounds["items"][0]["id"].as_str().context("no music")?.to_string();
-    s.call("attach_sound", json!({"sound": music, "target": "scene", "loop": true, "frame": 1})).await?;
-    let imported = s.call("import_sound", json!({"path": wav, "type": "sfx", "name": "beep"})).await?;
+    let music = sounds["items"][0]["id"]
+        .as_str()
+        .context("no music")?
+        .to_string();
+    s.call(
+        "attach_sound",
+        json!({"sound": music, "target": "scene", "loop": true, "frame": 1}),
+    )
+    .await?;
+    let imported = s
+        .call(
+            "import_sound",
+            json!({"path": wav, "type": "sfx", "name": "beep"}),
+        )
+        .await?;
     let sound_id = imported["sound_id"].as_str().unwrap().to_string();
-    s.call("attach_sound", json!({"sound": sound_id, "target": "Bo", "frame": 6})).await?;
+    s.call(
+        "attach_sound",
+        json!({"sound": sound_id, "target": "Bo", "frame": 6}),
+    )
+    .await?;
 
     let scene2 = s.call("describe_scene", json!({"frame": 6})).await?;
     let actions: Vec<&str> = scene2["actors"]
@@ -143,19 +202,32 @@ async fn builds_saves_and_reopens_a_two_scene_movie() -> Result<()> {
         .iter()
         .map(|a| a["action"]["name"].as_str().unwrap())
         .collect();
-    ensure!(actions.len() == 2 && actions[0] != actions[1], "different actions: {actions:?}");
+    ensure!(
+        actions.len() == 2 && actions[0] != actions[1],
+        "different actions: {actions:?}"
+    );
 
     // ---- Render, save
-    let r1 = s.call("render_frame", json!({"frame": 6, "path": out.join("scene2-f6.png")})).await?;
+    let r1 = s
+        .call(
+            "render_frame",
+            json!({"frame": 6, "path": out.join("scene2-f6.png")}),
+        )
+        .await?;
     png_ok(r1["path"].as_str().unwrap())?;
     s.call("select_scene", json!({"index": 0})).await?;
     for frame in [1, arrive / 2, arrive] {
         let path = out.join(format!("scene1-f{frame}.png"));
-        let r = s.call("render_frame", json!({"frame": frame, "path": path})).await?;
+        let r = s
+            .call("render_frame", json!({"frame": frame, "path": path}))
+            .await?;
         png_ok(r["path"].as_str().unwrap())?;
     }
     let exported = s
-        .call("export_frames", json!({"scene": 0, "dir": out.join("frames"), "step": 4}))
+        .call(
+            "export_frames",
+            json!({"scene": 0, "dir": out.join("frames"), "step": 4}),
+        )
         .await?;
     ensure!(exported["count"].as_i64().unwrap() >= 3, "{exported}");
 
@@ -167,12 +239,23 @@ async fn builds_saves_and_reopens_a_two_scene_movie() -> Result<()> {
     let state = s.call("get_state", json!({})).await?;
     ensure!(state["movie"]["scene_count"] == 2, "{state}");
     let reopened = s.call("describe_scene", json!({"frame": 1})).await?;
-    ensure!(reopened["actors"].as_array().unwrap().len() == 1, "{reopened}");
+    ensure!(
+        reopened["actors"].as_array().unwrap().len() == 1,
+        "{reopened}"
+    );
     s.call("select_scene", json!({"index": 1})).await?;
     let reopened2 = s.call("describe_scene", json!({"frame": 1})).await?;
-    ensure!(reopened2["actors"].as_array().unwrap().len() == 2, "{reopened2}");
+    ensure!(
+        reopened2["actors"].as_array().unwrap().len() == 2,
+        "{reopened2}"
+    );
 
-    let played = s.call("play", json!({"from_start": true, "wait": true, "timeout_seconds": 60})).await?;
+    let played = s
+        .call(
+            "play",
+            json!({"from_start": true, "wait": true, "timeout_seconds": 60}),
+        )
+        .await?;
     ensure!(played["finished"] == true, "{played}");
 
     println!("movie: {}", movie.display());

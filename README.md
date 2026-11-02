@@ -95,6 +95,96 @@ Use CMake to build the project. The project includes a CMakePresets.json file th
 * To run tests, run `ctest --test-dir build/<preset-name>`
 * To run 3DMM, run `dist/<preset-name>/3dmovie`
 
+## Automation bridge and MCP server
+
+3DMMEx can be driven by other programs, including AI assistants via the
+[Model Context Protocol](https://modelcontextprotocol.io). Two pieces:
+
+* **Automation bridge** (`src/automation/`): a small command server compiled into the app. It listens on
+  `127.0.0.1` only, speaks newline-delimited JSON, and calls the movie engine directly on the UI thread. It is
+  **off unless enabled** at runtime, and can be compiled out with `-D3DMM_AUTOMATION=OFF`.
+* **MCP server** (`tools/3dmm-mcp/`, Rust, [`rmcp`](https://crates.io/crates/rmcp), stdio): exposes the bridge as MCP
+  tools, returns rendered frames as images, and starts the app on demand.
+
+Engineering notes (object model, coordinates, how paths are recorded, design decisions, verification and limitations)
+are in [doc/automation/NOTES.md](doc/automation/NOTES.md).
+
+### Build and connect (macOS)
+
+```sh
+export VCPKG_ROOT=~/vcpkg   # checkout path must not contain spaces
+cmake --preset arm64-macos-relwithdebinfo
+cmake --build build/arm64-macos-relwithdebinfo --target install
+ctest --test-dir build/arm64-macos-relwithdebinfo
+cargo build --release --manifest-path tools/3dmm-mcp/Cargo.toml
+claude mcp add --scope user 3dmm -- "$PWD/tools/3dmm-mcp/target/release/3dmm-mcp"
+```
+
+Then open Claude Code and ask for a movie, e.g. *"make me a 30-second movie of two guys arguing in a diner, save it
+to ~/Movies/diner.3mm"*. The MCP server starts 3DMMEx (windowed, straight into the Studio) on the first tool call.
+The server finds the app in `dist/` next to it, preferring release builds; set `THREEDMM_APP` to use another build
+(a `.app` bundle or executable). Other environment variables: `THREEDMM_PORT` (default 7341) and
+`THREEDMM_NO_AUTOLAUNCH=1` (require an already-running app).
+
+Windows: the bridge is written to be portable (Winsock on Windows, BSD sockets elsewhere; no macOS-only APIs) and
+`speak_line` uses Windows' built-in speech synthesizer, but so far it has only been built and tested on macOS.
+
+### Enabling the bridge by hand
+
+Start 3DMMEx with `--automation` (port 7341) or `--automation=PORT`, or set the environment variable
+`THREEDMM_AUTOMATION=1` (or a port number). The app logs `automation: listening on 127.0.0.1:PORT` to stderr,
+skips the building/intro, opens the Studio with a new movie and runs in a window for that session. Only one client
+may connect at a time.
+
+### Protocol
+
+One JSON object per line in each direction:
+
+```
+→ {"id": 1, "cmd": "add_actor", "args": {"template": "Billy", "position": {"x": -1, "z": 1}}}
+← {"id": 1, "ok": true, "result": {"actor": {"id": 0, "name": "Billy", ...}}}
+← {"id": 2, "ok": false, "error": {"code": "not_found", "message": "no actor/prop named 'Bily'; ..."}}
+```
+
+`hello` returns the protocol version (currently 1). Error codes: `bad_args`, `not_found`, `bad_state`,
+`engine_error`, `unknown_command`, `io_error`. Requests run in order; `play` with `"wait": true` replies when
+playback ends. Content can be named by id (`"bkgd:2:2"`) or by name (case-insensitive, unique prefixes work);
+actors by numeric id or name.
+
+### Tools
+
+| Group | Tools |
+|---|---|
+| Session | `launch`, `get_state`, `goto_studio`, `new_movie`, `open_movie`, `save_movie`, `undo`, `redo` |
+| Catalog | `list_backgrounds` (with cameras and descriptions), `list_cameras`, `list_templates`, `list_actions`, `list_costumes`, `list_materials`, `list_sounds`, `list_3d_word_styles` |
+| Scenes | `add_scene`, `set_background`, `select_scene`, `set_camera`, `set_transition`, `delete_scene`, `goto_frame`, `add_pause` |
+| Actors | `add_actor`, `add_3d_word`, `select_actor`, `remove_actor`, `set_action`, `move_actor` (walk a path), `animate` (act on the spot for a duration), `place_actor`, `rotate_actor`, `scale_actor`, `set_costume`, `set_name`, `actor_lifetime` |
+| Text and sound | `add_text`, `import_sound`, `attach_sound`, `speak_line` (MCP only: text-to-speech dialogue, attached and acted) |
+| Observe and play | `describe_scene`, `render_frame` (returns the image), `export_frames` (PNG sequence), `play`, `stop` |
+
+The bridge also has `hello` and `quit`. The MCP server publishes a workflow guide as the resource
+`3dmm://guide/workflow` and a `make_movie` prompt.
+
+### Coordinates
+
+Positions are **stage coordinates in metres, relative to the current camera**: `x` is right (+) / left (−) on
+screen, `z` is away from (+) / toward (−) the camera, optional `y` is height above the floor. The origin is the spot
+where 3D Movie Maker drops new actors for that camera, usually centre stage. `describe_scene` reports the floor area
+the camera sees and, for each actor, its stage position, projected screen position and on-screen bounds. Raw engine
+coordinates are available as `{"world": [x, y, z]}` (10 units = 1 m, y up, floor at 0). Time is in frames: 6 per
+second, numbered per scene from 1.
+
+### Limitations
+
+* One level of undo (an engine limit); saving clears it.
+* Path speed comes from the chosen action (walk vs run) and the actor's size; `move_actor` reports how many
+  frames a path took rather than taking a target duration.
+* No lip sync (the engine has none); `speak_line` pairs speech with a talking action.
+* Recording an action or path for an actor replaces what that actor did after that frame, as in the Studio.
+* Rendered frames are 8-bit, 544×306, like the Studio's view.
+* Debug builds show assertion dialogs that block automation until dismissed; use a release build unattended.
+* Only one copy of 3DMMEx can run at a time.
+
 ## Contributing
 
 See [CONTRIBUTING.MD](CONTRIBUTING.md) for information on how to contribute to 3DMMEx.

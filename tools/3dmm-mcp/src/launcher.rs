@@ -18,8 +18,12 @@ const STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
 pub fn find_app() -> Result<PathBuf> {
     if let Ok(path) = std::env::var("THREEDMM_APP") {
         let path = PathBuf::from(path);
-        return executable_in(&path)
-            .with_context(|| format!("THREEDMM_APP={} is not a 3DMMEx executable or .app", path.display()));
+        return executable_in(&path).with_context(|| {
+            format!(
+                "THREEDMM_APP={} is not a 3DMMEx executable or .app",
+                path.display()
+            )
+        });
     }
 
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -29,13 +33,22 @@ pub fn find_app() -> Result<PathBuf> {
         .unwrap_or_default();
     // Prefer release-ish builds, then most recently modified
     candidates.sort_by_key(|p| {
-        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+        let name = p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
         let release = name.contains("rel");
         let mtime = std::fs::metadata(p).and_then(|m| m.modified()).ok();
         (std::cmp::Reverse(release), std::cmp::Reverse(mtime))
     });
     for dir in candidates {
-        for leaf in ["3D Movie Maker.app", "3dmovie.exe", "3DMOVIE.EXE", "3dmovie"] {
+        for leaf in [
+            "3D Movie Maker.app",
+            "3dmovie.exe",
+            "3DMOVIE.EXE",
+            "3dmovie",
+        ] {
             if let Ok(exe) = executable_in(&dir.join(leaf)) {
                 return Ok(exe);
             }
