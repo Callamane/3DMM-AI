@@ -583,13 +583,46 @@ static bool _FStepForAction(Request &req, PACTR pactr, int32_t anid, double *pdw
     return fTrue;
 }
 
+static bool _FCheckThenArg(Request &req)
+{
+    std::string strThen;
+    if (!req.FArgString("then", &strThen, fFalse))
+        return fFalse;
+    strThen = StrLower(strThen);
+    if (!strThen.empty() && strThen != "rest" && strThen != "freeze")
+        return req.Fail(kszErrBadArgs, "'then' must be \"rest\" or \"freeze\"");
+    return fTrue;
+}
+
+// What an actor does after a recorded path or animation ends (at the
+// current frame): "rest" switches to its rest pose (action 0 when that is a
+// rest action); "freeze" holds the last pose. The engine always freezes an
+// action applied at the end of a path, so "keep looping" isn't expressible;
+// animate for longer instead.
+static bool _FApplyThen(Request &req, PACTR pactr, std::string *pstrThen)
+{
+    std::string strThen = "rest";
+    if (!req.FArgString("then", &strThen, fFalse))
+        return fFalse;
+    strThen = StrLower(strThen);
+    if (strThen == "rest")
+    {
+        if (StrLower(StrActionName(pactr->Ptmpl(), 0)).find("rest") == std::string::npos)
+            strThen = "freeze"; // no rest pose for this template (e.g. some props)
+        else if (!pactr->FSetActionCore(0, 0, fFalse))
+            return FFailEngine(req, "could not return the actor to rest");
+    }
+    *pstrThen = strThen;
+    return fTrue;
+}
+
 static bool _FCmdMoveActor(Request &req)
 {
     PACTR pactr;
     StageFrame stage;
     CameraModel camera;
     int32_t anid;
-    std::string strThen = "stop";
+    std::string strThen;
 
     if (!FResolveActor(req, "actor", &pactr))
         return fFalse;
@@ -602,6 +635,8 @@ static bool _FCmdMoveActor(Request &req)
     if (!FGetStageFrame(pmvie, &stage, &camera))
         return FFailEngine(req, "no camera");
 
+    if (!_FCheckThenArg(req))
+        return fFalse;
     const Json &jsonPath = req.args.Get("path");
     if (!jsonPath.IsArray() || jsonPath.Size() == 0)
         return req.Fail(kszErrBadArgs, "'path' must be a non-empty array of positions, e.g. [{\"x\":2,\"z\":0}]");
@@ -654,18 +689,17 @@ static bool _FCmdMoveActor(Request &req)
     }
     if (!_FEndRecord(req, &rs))
         return fFalse;
-
-    if (!req.FArgString("then", &strThen, fFalse))
+    if (!_FApplyThen(req, pactr, &strThen))
         return fFalse;
+    req.result.Set("then", strThen);
     req.result.Set("start_frame", nfrmStart);
     req.result.Set("end_frame", pscen->Nfrm());
     req.result.Set("frames", pscen->Nfrm() - nfrmStart);
     req.result.Set("seconds", static_cast<double>(pscen->Nfrm() - nfrmStart) / kfps);
     req.result.Set("distance_metres", std::floor((_XyzWorld(pactr) - start).Length() / kdwrPerMetre * 100 + 0.5) / 100);
     req.result.Set("action", StrActionName(pactr->Ptmpl(), anid));
-    req.result.Set("note", "the actor stops (freezes) at the end of the path; the scene's current frame is now the "
-                           "last frame of the path. Speed is set by the action: use a faster action (e.g. run) to "
-                           "cover ground quicker.");
+    req.result.Set("note", "the scene's current frame is now the arrival frame. Speed is set by the action: use a "
+                           "faster action (e.g. run) to cover ground quicker.");
     EnsureRendered(pmvie);
     req.result.Set("actor", JsonActor(pmvie, pactr, stage, camera));
     return fTrue;
@@ -687,6 +721,8 @@ static bool _FCmdAnimate(Request &req)
     if (!pactr->FOnStage())
         return req.Fail(kszErrBadState, "the actor is not on stage at frame " + std::to_string(pscen->Nfrm()));
 
+    if (!_FCheckThenArg(req))
+        return fFalse;
     if (req.FHasArg("frames"))
     {
         if (!req.FArgInt("frames", &cfrm))
@@ -750,12 +786,16 @@ static bool _FCmdAnimate(Request &req)
         }
     }
 
+    std::string strThen;
+    if (!_FApplyThen(req, pactr, &strThen))
+        return fFalse;
     pmvie->SetDirty();
     RefreshViews(pmvie);
     req.result.Set("start_frame", nfrmStart);
     req.result.Set("end_frame", pscen->Nfrm());
     req.result.Set("frames", pscen->Nfrm() - nfrmStart);
     req.result.Set("action", StrActionName(pactr->Ptmpl(), anid));
+    req.result.Set("then", strThen);
     req.result.Set("actor", _JsonActorNow(pmvie, pactr));
     return fTrue;
 }

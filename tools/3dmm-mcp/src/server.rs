@@ -155,7 +155,13 @@ impl ThreeDmmServer {
             let animated = self
                 .bridge_call(
                     "animate",
-                    json!({"actor": actor, "action": action, "frames": frames, "frame": start}),
+                    json!({
+                        "actor": actor,
+                        "action": action,
+                        "frames": frames,
+                        "frame": start,
+                        "then": args.get("then").cloned().unwrap_or_else(|| json!("rest")),
+                    }),
                     timeout,
                 )
                 .await;
@@ -170,6 +176,7 @@ impl ThreeDmmServer {
         Ok(vec![ContentBlock::text(result.to_string())])
     }
 
+    /// Runs one tool (anything but batch).
     async fn run_tool(&self, spec: &ToolSpec, args: Value) -> anyhow::Result<Vec<ContentBlock>> {
         let timeout = Duration::from_secs(spec.timeout_secs);
         match spec.kind {
@@ -182,18 +189,95 @@ impl ThreeDmmServer {
                 Ok(vec![ContentBlock::text(result.to_string())])
             }
             Kind::SpeakLine => self.speak_line(args, timeout).await,
-            Kind::RenderImage => {
-                let result = self.bridge_call("render_frame", args, timeout).await?;
+            Kind::BridgeImage(cmd) => {
+                let result = self.bridge_call(cmd, args, timeout).await?;
                 let path = result
                     .get("path")
                     .and_then(Value::as_str)
-                    .ok_or_else(|| anyhow::anyhow!("render_frame returned no path"))?;
+                    .ok_or_else(|| anyhow::anyhow!("{cmd} returned no image path"))?;
                 let png = tokio::fs::read(path).await?;
                 let data = base64::engine::general_purpose::STANDARD.encode(png);
                 Ok(vec![
                     ContentBlock::image(data, "image/png"),
                     ContentBlock::text(result.to_string()),
                 ])
+            }
+            Kind::Batch => anyhow::bail!("batch steps cannot themselves be batches"),
+        }
+    }
+
+    /// Runs batch steps in order. Returns the content and whether any step
+    /// failed.
+    async fn run_batch(&self, args: Value) -> (Vec<ContentBlock>, bool) {
+        let steps = args
+            .get("steps")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let stop_on_error = args
+            .get("stop_on_error")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        if steps.is_empty() {
+            return (
+                vec![ContentBlock::text("'steps' must be a non-empty array")],
+                true,
+            );
+        }
+        let mut content = Vec::new();
+        let mut failed = false;
+        for (index, step) in steps.iter().enumerate() {
+            let name = step.get("tool").and_then(Value::as_str).unwrap_or_default();
+            let step_args = step.get("args").cloned().unwrap_or_else(|| json!({}));
+            let outcome = match self.by_name.get(name) {
+                Some(&i) => self.run_tool(&self.tools[i], step_args).await,
+                None => Err(anyhow::anyhow!("unknown tool '{name}'")),
+            };
+            match outcome {
+                Ok(blocks) => {
+                    for block in blocks {
+                        // Prefix text results with the step so they can be matched up
+                        let text = block.as_text().map(|t| t.text.clone());
+                        match text {
+                            Some(text) => content
+                                .push(ContentBlock::text(format!("[{index}] {name}: {text}"))),
+                            None => content.push(block),
+                        }
+                    }
+                }
+                Err(err) => {
+                    failed = true;
+                    content.push(ContentBlock::text(format!(
+                        "[{index}] {name} FAILED: {}",
+                        describe_error(&err)
+                    )));
+                    if stop_on_error {
+                        content.push(ContentBlock::text(format!(
+                            "stopped after step {index}; steps {}..{} were not run",
+                            index + 1,
+                            steps.len() - 1
+                        )));
+                        break;
+                    }
+                }
+            }
+        }
+        (content, failed)
+    }
+}
+
+/// Error text for the model: bridge errors with their code, others with context.
+fn describe_error(err: &anyhow::Error) -> String {
+    match err.downcast_ref::<BridgeError>() {
+        Some(bridge) => format!("{} [{}]", bridge.message, bridge.code),
+        None => {
+            let text = format!("{err:#}");
+            if text.contains("did not answer") {
+                format!(
+                    "{text}. 3DMMEx may be showing a dialog (debug builds show assertion dialogs); check its window"
+                )
+            } else {
+                text
             }
         }
     }
@@ -249,15 +333,18 @@ impl ServerHandler for ThreeDmmServer {
         };
         let spec = &self.tools[index];
         let args = Value::Object(request.arguments.unwrap_or_default());
-        let result = match self.run_tool(spec, args).await {
-            Ok(content) => CallToolResult::success(content),
-            Err(err) => {
+        let result = if spec.kind == Kind::Batch {
+            let (content, failed) = self.run_batch(args).await;
+            if failed {
+                CallToolResult::error(content)
+            } else {
+                CallToolResult::success(content)
+            }
+        } else {
+            match self.run_tool(spec, args).await {
+                Ok(content) => CallToolResult::success(content),
                 // Report failures as tool errors so the model can read and react
-                let message = match err.downcast_ref::<BridgeError>() {
-                    Some(bridge) => format!("{} [{}]", bridge.message, bridge.code),
-                    None => format!("{err:#}"),
-                };
-                CallToolResult::error(vec![ContentBlock::text(message)])
+                Err(err) => CallToolResult::error(vec![ContentBlock::text(describe_error(&err))]),
             }
         };
         Ok(result.into())

@@ -5,6 +5,7 @@
 
 # Engine-independent pieces, unit tested on their own
 add_library(automation-core STATIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/image8.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/json.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/linesrv.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/pngwrite.cpp"

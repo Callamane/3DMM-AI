@@ -191,7 +191,9 @@ std::string StrActionName(PTMPL ptmpl, int32_t anid);
 /***************************************************************************
     Frame capture (observe.cpp)
 ***************************************************************************/
-bool FRenderToPng(Request &req, const std::string &strPath, int32_t *pdxp, int32_t *pdyp);
+// Renders the current frame (3D + text boxes) to a PNG. fOverlay draws the
+// stage-coordinate grid and actor labels on top.
+bool FRenderToPng(Request &req, const std::string &strPath, int32_t *pdxp, int32_t *pdyp, bool fOverlay);
 
 } // namespace automation
 

@@ -50,6 +50,11 @@ const BRIDGE_COMMANDS: &[&str] = &[
     "attach_sound",
     "describe_scene",
     "render_frame",
+    "preview_cameras",
+    "describe_timeline",
+    "checkpoint",
+    "restore_checkpoint",
+    "list_checkpoints",
     "export_frames",
     "play",
     "stop",
@@ -60,7 +65,7 @@ fn tool_names_are_unique_and_map_to_bridge_commands() {
     let mut seen = HashSet::new();
     for tool in all_tools() {
         assert!(seen.insert(tool.name), "duplicate tool {}", tool.name);
-        if let Kind::Bridge(cmd) = tool.kind {
+        if let Kind::Bridge(cmd) | Kind::BridgeImage(cmd) = tool.kind {
             assert!(
                 BRIDGE_COMMANDS.contains(&cmd),
                 "{} forwards to unknown command {cmd}",

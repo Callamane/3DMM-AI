@@ -11,8 +11,11 @@ pub enum Kind {
     Bridge(&'static str),
     /// Start (or reconnect to) the app.
     Launch,
-    /// Render a frame and return it as an image.
-    RenderImage,
+    /// Forward to a bridge command that writes a PNG ("path" in its result)
+    /// and return the picture as image content.
+    BridgeImage(&'static str),
+    /// Run several tool calls in order.
+    Batch,
     /// Synthesize a spoken line, import it and (optionally) attach and act it.
     SpeakLine,
 }
@@ -156,6 +159,19 @@ pub fn all_tools() -> Vec<ToolSpec> {
             "Undo the last edit (3D Movie Maker keeps exactly one level of undo).",
             obj(json!({}), &[]),
         ),
+        bridge(
+            "checkpoint",
+            "Snapshot the movie under a name before trying something risky (there is only one level of undo). \
+             restore_checkpoint goes back to it. Doesn't change where save_movie writes. Clears undo.",
+            obj(json!({"name": {"type": "string", "maxLength": 40}}), &["name"]),
+        ),
+        bridge(
+            "restore_checkpoint",
+            "Throw away changes since a checkpoint and return to it. A later save_movie without a path saves to \
+             the movie's original file.",
+            obj(json!({"name": {"type": "string"}}), &["name"]),
+        ),
+        bridge("list_checkpoints", "List the checkpoints made in this session.", obj(json!({}), &[])),
         bridge("redo", "Redo the edit that undo just reverted.", obj(json!({}), &[])),
         // ---------------------------------------------------------------
         // Catalog
@@ -375,7 +391,9 @@ pub fn all_tools() -> Vec<ToolSpec> {
                  waypoint in order and stops at the last one. Speed comes from the action (see \
                  metres_per_frame in list_actions); the result reports how many frames it took, and the \
                  scene's current frame ends at the arrival frame. Recording replaces any later path the actor \
-                 had. pause_frames on a waypoint makes it mark time there. {COORDS} {FRAMES}"
+                 had. pause_frames on a waypoint makes it mark time there. Afterwards the actor goes to its rest \
+                 pose (then=\"freeze\" holds the last stride instead). Tip: render_frame with overlay=true \
+                 draws the floor grid so you can pick waypoints. {COORDS} {FRAMES}"
             ),
             obj(
                 json!({
@@ -394,6 +412,7 @@ pub fn all_tools() -> Vec<ToolSpec> {
                         }
                     },
                     "action": {"type": ["string", "integer"], "description": "Moving action (default: the current action)."},
+                    "then": {"type": "string", "enum": ["rest", "freeze"], "default": "rest", "description": "Afterwards: return to the rest pose, or hold the last pose."},
                     "frame": frame_prop()
                 }),
                 &["path"],
@@ -406,7 +425,8 @@ pub fn all_tools() -> Vec<ToolSpec> {
                  starting at the current frame (or 'frame'). This also makes the scene last at least that long. \
                  Use it for dialogue: animate the speaker with a talking action while attaching a speech sound. \
                  Like move_actor, this replaces whatever the actor was doing after the start frame, so build each \
-                 actor's performance in time order. {FRAMES}"
+                 actor's performance in time order. Afterwards the actor returns to rest (then=\"freeze\" holds \
+                 the last pose). To keep an action going longer, animate for longer. {FRAMES}"
             ),
             obj(
                 json!({
@@ -414,6 +434,7 @@ pub fn all_tools() -> Vec<ToolSpec> {
                     "action": {"type": ["string", "integer"]},
                     "seconds": {"type": "number", "exclusiveMinimum": 0},
                     "frames": {"type": "integer", "minimum": 1},
+                    "then": {"type": "string", "enum": ["rest", "freeze"], "default": "rest", "description": "Afterwards: return to the rest pose, or hold the last pose."},
                     "frame": frame_prop()
                 }),
                 &[],
@@ -546,6 +567,7 @@ pub fn all_tools() -> Vec<ToolSpec> {
                     "text": {"type": "string", "description": "The line, as it should be spoken."},
                     "voice": {"type": "string", "description": "Speech voice name (default: the system voice)."},
                     "action": {"type": ["string", "integer"], "description": "Talking action, e.g. \"Talk\" or \"Yell\" (default \"Talk\"; \"none\" to leave the actor alone)."},
+                    "then": {"type": "string", "enum": ["rest", "freeze"], "default": "rest", "description": "Afterwards: return to the rest pose, or hold the last pose."},
                     "frame": frame_prop()
                 }),
                 &["actor", "text"],
@@ -574,22 +596,49 @@ pub fn all_tools() -> Vec<ToolSpec> {
         // ---------------------------------------------------------------
         bridge(
             "describe_scene",
-            "Describe the current scene at the current frame (or 'frame'): camera and visible floor area, every \
-             actor (position, on-screen location and bounds, action, lifetime), text boxes and scene sounds.",
-            obj(json!({"frame": frame_prop()}), &[]),
+            "Describe the current scene at the current frame (or 'frame'): camera and visible floor area (stage \
+             x/z of the floor at the bottom and middle of the screen; feet between those rows are comfortably \
+             in shot), every actor (position, on-screen location and bounds, action, lifetime), text boxes and \
+             scene sounds. verbose=true adds the raw camera matrix.",
+            obj(json!({"frame": frame_prop(), "verbose": {"type": "boolean", "default": false}}), &[]),
         ),
         spec(
             "render_frame",
-            Kind::RenderImage,
+            Kind::BridgeImage("render_frame"),
             "Render a frame of the current scene exactly as it looks in the movie (3D plus text) and show it to \
-             you as an image. Use it to check framing after placing or moving actors.",
+             you as an image. Use it to check framing after placing or moving actors. overlay=true draws the \
+             floor grid of stage coordinates (lines every metre, labelled X=… and Z=…) and labels each actor \
+             \"#id name\": the quickest way to see where positions land and whether furniture hides someone.",
             obj(
                 json!({
                     "frame": frame_prop(),
+                    "overlay": {"type": "boolean", "default": false},
                     "path": {"type": "string", "description": "Where to write the PNG (default: a temp file)."}
                 }),
                 &[],
             ),
+        ),
+        spec(
+            "preview_cameras",
+            Kind::BridgeImage("preview_cameras"),
+            "Show every camera angle of a background on one contact sheet (cells labelled CAM n), so you can \
+             pick angles at a glance. Without 'background' it previews the current scene's set, actors included; \
+             with one, the set is shown empty and nothing in the movie changes.",
+            obj(
+                json!({
+                    "background": {"type": "string", "description": "Background id or name (default: the current scene's)."},
+                    "cameras": {"type": "array", "items": {"type": "integer"}, "description": "Only these camera indexes."}
+                }),
+                &[],
+            ),
+        ),
+        bridge(
+            "describe_timeline",
+            "Summarise what happens when in a scene: camera changes, each actor's segments (frames, action, \
+             where they stand or from/to where they move, when they're off stage), when text boxes are visible \
+             and when sounds start. Use it to check timing and continuity without rendering every frame. \
+             Positions use the stage coordinates of the scene's opening camera.",
+            obj(json!({"scene": {"type": "integer", "minimum": 0, "description": "Default: the current scene."}}), &[]),
         ),
         bridge(
             "export_frames",
@@ -621,6 +670,30 @@ pub fn all_tools() -> Vec<ToolSpec> {
                 &[],
             ),
         ),
+        spec(
+            "batch",
+            Kind::Batch,
+            "Run several tool calls in order in one go, e.g. adding a cast and blocking a scene. Each step is \
+             {\"tool\": name, \"args\": {...}}. Stops at the first error unless stop_on_error is false. Returns \
+             each step's result (and any images). Use it once you know what you want; use single calls while \
+             exploring.",
+            obj(
+                json!({
+                    "steps": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 50,
+                        "items": {
+                            "type": "object",
+                            "properties": {"tool": {"type": "string"}, "args": {"type": "object"}},
+                            "required": ["tool"]
+                        }
+                    },
+                    "stop_on_error": {"type": "boolean", "default": true}
+                }),
+                &["steps"],
+            ),
+        ),
         bridge("stop", "Stop playback in the app window (does nothing if the movie is not playing).", obj(json!({}), &[])),
     ];
 
@@ -628,7 +701,9 @@ pub fn all_tools() -> Vec<ToolSpec> {
         match tool.name {
             "play" => tool.timeout_secs = 15 * 60,
             "export_frames" => tool.timeout_secs = 10 * 60,
-            "goto_studio" | "launch" => tool.timeout_secs = 120,
+            "goto_studio" | "launch" | "preview_cameras" | "describe_timeline" => {
+                tool.timeout_secs = 120
+            }
             _ => {}
         }
     }

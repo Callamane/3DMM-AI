@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "image8.h"
 #include "json.h"
 #include "pngwrite.h"
 #include "stage.h"
@@ -193,4 +194,66 @@ TEST(AutomationStage, ProjectionAndFloorRayAgree)
 
     // Behind the camera is not projectable
     EXPECT_FALSE(camera.FProject(Vec3(0, 0, 200), &xp, &yp, &fInView));
+}
+
+TEST(AutomationImage, DrawsTextLinesAndDownscales)
+{
+    Image8 img(40, 20, 0);
+    int32_t dx = DrawText(&img, 2, 2, "X=1", 5, 9, 1);
+    EXPECT_EQ(dx, DxText("X=1", 1));
+    int32_t cFore = 0, cOutline = 0;
+    for (uint8_t b : img.pixels)
+    {
+        cFore += b == 5;
+        cOutline += b == 9;
+    }
+    EXPECT_GT(cFore, 5);
+    EXPECT_GT(cOutline, cFore);
+
+    Image8 imgLine(10, 10, 0);
+    DrawLine(&imgLine, 0, 0, 9, 9, 3);
+    for (int32_t i = 0; i < 10; i++)
+        EXPECT_EQ(imgLine.Get(i, i), 3);
+    // Off-image coordinates are clipped, not written
+    DrawLine(&imgLine, -50, 5, 50, 5, 4);
+    EXPECT_EQ(imgLine.Get(0, 5), 4);
+
+    Image8 imgSmall = Downscale2x(imgLine);
+    EXPECT_EQ(imgSmall.width, 5);
+    EXPECT_EQ(imgSmall.Get(2, 2), 3);
+}
+
+TEST(AutomationImage, NearestPaletteColor)
+{
+    std::vector<PngColor> palette = {{0, 0, 0}, {250, 250, 250}, {0, 200, 220}, {255, 240, 0}};
+    EXPECT_EQ(BNearestColor(palette, 255, 255, 255), 1);
+    EXPECT_EQ(BNearestColor(palette, 10, 190, 210), 2);
+    EXPECT_EQ(BNearestColor(palette, 250, 230, 20), 3);
+}
+
+TEST(AutomationImage, StageGridProjectsIntoView)
+{
+    CameraModel camera = _CameraLookingDownZ(12);
+    StageFrame stage;
+    stage.Init(camera, Vec3(0, 0, 50));
+    Image8 img(544, 306, 0);
+    DrawStageGrid(&img, camera, stage, -2, 2, -1, 3, {1, 2, 3, 4});
+    int32_t cGrid = 0, cAxis = 0, cText = 0;
+    for (uint8_t b : img.pixels)
+    {
+        cGrid += b == 1;
+        cAxis += b == 2;
+        cText += b == 3;
+    }
+    EXPECT_GT(cGrid, 200);
+    EXPECT_GT(cAxis, 50);
+    EXPECT_GT(cText, 20);
+    // The x=0 axis passes through the screen centre column below the horizon
+    double xp, yp;
+    bool fInView;
+    ASSERT_TRUE(camera.FProject(stage.ToWorld(Vec3(0, 0, 1)), &xp, &yp, &fInView));
+    bool fNear = false;
+    for (int32_t dx = -1; dx <= 1; dx++)
+        fNear |= img.Get(static_cast<int32_t>(xp) + dx, static_cast<int32_t>(yp)) == 2;
+    EXPECT_TRUE(fNear);
 }

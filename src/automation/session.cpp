@@ -4,7 +4,9 @@
 ***************************************************************************/
 #include "bridge.h"
 
+#include <cctype>
 #include <cstdlib>
+#include <filesystem>
 
 #include "buildgob.h"
 #include "sharutil.chh"
@@ -16,6 +18,10 @@ namespace automation
 {
 
 const uint32_t kdtsStudioTimeout = 60 * kdtsSecond;
+
+// Where save_movie writes by default after restore_checkpoint (the restored
+// movie is detached from its checkpoint file)
+static std::string _strPathBeforeRestore;
 
 // Builds an FNI from a user-supplied path. Expands a leading "~/".
 bool FFniFromPath(Request &req, const std::string &strPathIn, FTG ftg, FNI *pfni)
@@ -253,6 +259,7 @@ static bool _FCmdNewMovie(Request &req)
         return fFalse;
     if (!PstdioCur()->FLoadMovie(pvNil))
         return FFailEngine(req, "could not create a new movie");
+    _strPathBeforeRestore.clear();
     req.result = JsonMovieState(PmvieCur());
     return fTrue;
 }
@@ -271,6 +278,7 @@ static bool _FCmdOpenMovie(Request &req)
         return fFalse;
     if (!PstdioCur()->FLoadMovie(&fni))
         return FFailEngine(req, "could not open '" + strPath + "'");
+    _strPathBeforeRestore.clear();
     req.result = JsonMovieState(PmvieCur());
     return fTrue;
 }
@@ -289,12 +297,14 @@ static bool _FCmdSaveMovie(Request &req)
     if (!req.FArgString("path", &strPath, fFalse))
         return fFalse;
 
-    if (strPath.empty())
+    if (strPath.empty() && !pmvie->FGetFni(&fni))
     {
-        if (!pmvie->FGetFni(&fni))
+        // A movie restored from a checkpoint saves back to where it came from
+        if (_strPathBeforeRestore.empty())
             return req.Fail(kszErrBadArgs, "this movie has never been saved; pass 'path' (an absolute .3mm path)");
+        strPath = _strPathBeforeRestore;
     }
-    else
+    if (!strPath.empty())
     {
         if (StrLower(strPath).size() < 4 || StrLower(strPath).compare(StrLower(strPath).size() - 4, 4, ".3mm") != 0)
             strPath += ".3mm";
@@ -315,11 +325,162 @@ static bool _FCmdSaveMovie(Request &req)
     // app is killed before it next flushes (part of the header is buffered)
     pmvie->Flush();
     pmvie->Pmcc()->UpdateTitle(pmvie->PstnTitle());
+    _strPathBeforeRestore.clear();
 
     fni.GetStnPath(&stn);
     req.result.Set("path", StrFromStn(&stn));
     req.result.Set("scene_count", pmvie->Cscen());
     req.result.Set("note", "saving clears the undo history (same as the Studio's Save)");
+    return fTrue;
+}
+
+/***************************************************************************
+    Checkpoints
+
+    3D Movie Maker keeps a single level of undo, so clients can snapshot the
+    movie before trying something and roll back. A checkpoint is the
+    Studio's "Save a Copy" into a temp folder: the working movie is not
+    redirected to the copy (the engine switches its working file to a temp
+    file before the next edit).
+***************************************************************************/
+struct Checkpoint
+{
+    std::string name;
+    std::string path;
+    std::string pathMovie; // where the movie was saved when the checkpoint was made
+    int32_t cscen;
+};
+
+static std::vector<Checkpoint> _vecCheckpoints;
+
+static std::string _StrCheckpointDir(const std::string &strName)
+{
+    std::error_code ec;
+    std::filesystem::path path = std::filesystem::temp_directory_path(ec);
+    if (ec)
+        path = ".";
+    path /= "3dmm-checkpoints";
+    path /= std::to_string(TsCurrent()) + "-" + strName;
+    std::filesystem::create_directories(path, ec);
+    return path.string();
+}
+
+static bool _FCmdCheckpoint(Request &req)
+{
+    PMVIE pmvie;
+    std::string strName;
+    FNI fni, fniCur;
+    STN stn;
+
+    if (!FRequireMovie(req, &pmvie) || !FRequireNotPlaying(req, pmvie) || !req.FArgString("name", &strName))
+        return fFalse;
+    if (pmvie->Cscen() < 1)
+        return req.Fail(kszErrBadState, "nothing to checkpoint yet; add a scene first");
+    std::string strSafe;
+    for (char ch : strName)
+        strSafe.push_back(isalnum(static_cast<unsigned char>(ch)) || ch == '-' || ch == '_' ? ch : '_');
+    if (strSafe.empty() || strSafe.size() > 40)
+        return req.Fail(kszErrBadArgs, "'name' must be 1-40 characters");
+
+    // Name the file after the movie title: loading a file takes its name as
+    // the title, so restoring keeps the title
+    std::string strTitle = StrFromStn(pmvie->PstnTitle());
+    for (char &ch : strTitle)
+    {
+        if (ch == '/' || ch == '\\' || ch == ':')
+            ch = '-';
+    }
+    if (strTitle.empty())
+        strTitle = "movie";
+    std::string strPath = _StrCheckpointDir(strSafe) + "/" + strTitle + ".3mm";
+    if (!FFniFromPath(req, strPath, kftg3mm, &fni))
+        return fFalse;
+
+    std::string strPathMovie;
+    if (pmvie->FGetFni(&fniCur))
+    {
+        fniCur.GetStnPath(&stn);
+        strPathMovie = StrFromStn(&stn);
+    }
+    else
+    {
+        strPathMovie = _strPathBeforeRestore;
+    }
+
+    if (!pmvie->FSaveToFni(&fni, fFalse))
+        return FFailEngine(req, "could not write the checkpoint");
+    pmvie->Flush();
+    // Saving a copy marks the movie clean; it isn't saved anywhere real
+    pmvie->SetDirty(fTrue);
+
+    for (auto it = _vecCheckpoints.begin(); it != _vecCheckpoints.end(); ++it)
+    {
+        if (it->name == strName)
+        {
+            _vecCheckpoints.erase(it);
+            break;
+        }
+    }
+    _vecCheckpoints.push_back({strName, strPath, strPathMovie, pmvie->Cscen()});
+    req.result.Set("name", strName);
+    req.result.Set("scene_count", pmvie->Cscen());
+    req.result.Set("note", "restore_checkpoint returns to this state; making a checkpoint clears undo");
+    return fTrue;
+}
+
+static bool _FCmdRestoreCheckpoint(Request &req)
+{
+    PMVIE pmvie;
+    std::string strName;
+    FNI fni;
+
+    if (!FRequireMovie(req, &pmvie) || !FRequireNotPlaying(req, pmvie) || !req.FArgString("name", &strName))
+        return fFalse;
+    const Checkpoint *pcp = nullptr;
+    std::string strNames;
+    for (const Checkpoint &cp : _vecCheckpoints)
+    {
+        if (cp.name == strName)
+            pcp = &cp;
+        strNames += (strNames.empty() ? "'" : ", '") + cp.name + "'";
+    }
+    if (pcp == nullptr)
+    {
+        return req.Fail(kszErrNotFound,
+                        "no checkpoint named '" + strName + "'" +
+                            (strNames.empty() ? std::string(" (none made yet)") : ". Checkpoints: " + strNames));
+    }
+    if (!FFniFromPath(req, pcp->path, kftg3mm, &fni))
+        return fFalse;
+
+    // Restoring deliberately throws away the current state
+    pmvie->SetDirty(fFalse);
+    pmvie->DOCB::SetDirty(fFalse);
+    std::string strPathMovie = pcp->pathMovie;
+    if (!PstdioCur()->FLoadMovie(&fni))
+        return FFailEngine(req, "could not load checkpoint '" + strName + "'");
+    pmvie = PmvieCur();
+    // Don't let a later save overwrite the checkpoint; save to the movie's
+    // own file instead
+    pmvie->ForceSaveAs();
+    pmvie->SetDirty(fTrue);
+    _strPathBeforeRestore = strPathMovie;
+    req.result = JsonMovieState(pmvie);
+    req.result.Set("restored", strName);
+    return fTrue;
+}
+
+static bool _FCmdListCheckpoints(Request &req)
+{
+    Json jsonList = Json::MakeArray();
+    for (const Checkpoint &cp : _vecCheckpoints)
+    {
+        Json json = Json::MakeObject();
+        json.Set("name", cp.name);
+        json.Set("scene_count", cp.cscen);
+        jsonList.Push(json);
+    }
+    req.result.Set("checkpoints", jsonList);
     return fTrue;
 }
 
@@ -379,6 +540,9 @@ const CommandInfo krgcmdSession[] = {
     {"new_movie", _FCmdNewMovie, fTrue},
     {"open_movie", _FCmdOpenMovie, fTrue},
     {"save_movie", _FCmdSaveMovie, fTrue},
+    {"checkpoint", _FCmdCheckpoint, fTrue},
+    {"restore_checkpoint", _FCmdRestoreCheckpoint, fTrue},
+    {"list_checkpoints", _FCmdListCheckpoints, fTrue},
     {"undo", _FCmdUndo, fTrue},
     {"redo", _FCmdRedo, fTrue},
     {"quit", _FCmdQuit, fFalse},
