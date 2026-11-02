@@ -181,6 +181,12 @@ class BKGD : public BKGD_PAR
         return _braRotY;
     }
     void GetActorPlacePoint(BRS *pxr, BRS *pyr, BRS *pzr);
+    void GetPrimaryPlacePoint(BRS *pxr, BRS *pyr, BRS *pzr) // no side effects, unlike GetActorPlacePoint
+    {
+        *pxr = _xrPlace;
+        *pyr = _yrPlace;
+        *pzr = _zrPlace;
+    }
     void ReuseActorPlacePoint(void);
 
     void GetDefaultSound(PTAG ptagSnd, int32_t *pvlm, bool *pfLoop)

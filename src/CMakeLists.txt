@@ -206,6 +206,11 @@ endif()
 
 set_property(TARGET studio PROPERTY OUTPUT_NAME 3dmovie)
 
+option(3DMM_AUTOMATION "Build the automation bridge (local command server, disabled unless 3DMM is run with --automation)" ON)
+if (3DMM_AUTOMATION)
+    add_subdirectory(automation)
+endif()
+
 if(MSVC)
     target_link_options(studio
         BEFORE PRIVATE

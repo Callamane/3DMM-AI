@@ -27,6 +27,10 @@
 #include <cstdio>
 #endif // KAUAI_SDL
 
+#ifdef AUTOMATION
+#include "automation/automation.h"
+#endif // AUTOMATION
+
 ASSERTNAME
 
 // If the following value is defined, 3DMM displays the dlidDesktopResizing
@@ -210,6 +214,7 @@ bool APP::_FInit(uint32_t grfapp, uint32_t grfgob, int32_t ginDef)
     FNI fniUserDoc;
     int32_t fFirstTimeUser;
     int32_t dtsDelay;
+    bool fStartInBuilding;
 
     // Load startup preferences
     int32_t fStartupSound = kfStartupSoundDefault;
@@ -433,7 +438,15 @@ bool APP::_FInit(uint32_t grfapp, uint32_t grfgob, int32_t ginDef)
     // to the studio.  Otherwise, start the building.
     GetPortfolioDoc(&fniUserDoc);
 
-    if (fniUserDoc.Ftg() == ftgNil)
+    fStartInBuilding = fniUserDoc.Ftg() == ftgNil;
+#ifdef AUTOMATION
+    // With automation enabled, skip the building and open the Studio with a
+    // new movie so a client can start working without any clicks
+    if (FAutomationEnabled())
+        fStartInBuilding = fFalse;
+#endif // AUTOMATION
+
+    if (fStartInBuilding)
     {
         // Startup place depends on whether this is the user's first time in.
         if (!FGetProp(kpridFirstTimeUser, &fFirstTimeUser))
@@ -479,6 +492,10 @@ bool APP::_FInit(uint32_t grfapp, uint32_t grfgob, int32_t ginDef)
     }
 
     EnsureInteractive();
+
+#ifdef AUTOMATION
+    AutomationStart();
+#endif // AUTOMATION
 
     return fTrue;
 LFail:
@@ -837,6 +854,15 @@ bool APP::_FEnsureDisplayResolution(void)
     int32_t fSwitchRes;
     bool fNoValue;
     int32_t tsResize;
+
+#ifdef AUTOMATION
+    if (FAutomationEnabled())
+    {
+        // Automation sessions run in a window and leave the saved preference alone
+        _fRunInWindow = fTrue;
+        return fTrue;
+    }
+#endif // AUTOMATION
 
     if (_FDisplayIs640480())
     {
@@ -2273,6 +2299,10 @@ void APP::_ParseCommandLine(void)
     AssertDo(_fniCurrentDir.FGetCwd(), "Bad current directory?");
     AssertDo(_fniExe.FGetExe(), "Bad module filename?");
 
+#ifdef AUTOMATION
+    AutomationReadEnv();
+#endif // AUTOMATION
+
     // Skip first argument
     for (int32_t ipsz = 1; ipsz < _cpszArgv; ipsz++)
     {
@@ -2288,6 +2318,11 @@ void APP::_ParseCommandLine(void)
             fIsOption |= (*pch == ChLit('/'));
 #endif // WIN32
         }
+
+#ifdef AUTOMATION
+        if (fIsOption && FAutomationParseArg(pch))
+            continue;
+#endif // AUTOMATION
 
         if (fIsOption)
         {
@@ -3819,6 +3854,9 @@ bool APP::_FSetRunInWindow(bool fRunInWindowNew)
 ***************************************************************************/
 void APP::_CleanUp(void)
 {
+#ifdef AUTOMATION
+    AutomationShutdown();
+#endif // AUTOMATION
     _FWriteUserData();
     ReleasePpo(&_pstdio);
     ReleasePpo(&_ptatr);
@@ -4240,6 +4278,10 @@ bool APP::FCmdIdle(PCMD pcmd)
     PCFL pcfl;
 
     APP_PAR::FCmdIdle(pcmd);
+
+#ifdef AUTOMATION
+    AutomationPoll();
+#endif // AUTOMATION
 
     /* Check all open chunky files for errors */
     for (pcfl = CFL::PcflFirst(); pcfl != pvNil; pcfl = (PCFL)pcfl->PbllNext())
