@@ -130,6 +130,44 @@ The server finds the app in `dist/` next to it, preferring release builds; set `
 Windows: the bridge is written to be portable (Winsock on Windows, BSD sockets elsewhere; no macOS-only APIs) and
 `speak_line` uses Windows' built-in speech synthesizer, but so far it has only been built and tested on macOS.
 
+### A whole movie in one call
+
+`script_movie` takes a screenplay and does the rest: casting, blocking, voices, acting, staging, sound, camera cuts,
+a review and (optionally) the MP4. This call makes a 20-second, two-scene argument in a diner, in a few seconds:
+
+```json
+{
+  "export": "/Users/me/Movies/argument.mp4",
+  "scenes": [
+    {
+      "background": "diner", "title": "THE ARGUMENT", "music": "tense", "subtitles": true, "transition": "dissolve",
+      "cast": [{"name": "Lou", "actor": "Billy"}, {"name": "Moe", "actor": "Hiro"}],
+      "lines": [
+        {"who": "Lou", "says": "You said the game was at eight."},
+        {"who": "Moe", "says": "I said nine. I always say nine."},
+        {"who": "Lou", "does": "Mad", "seconds": 1.5},
+        {"who": "Moe", "does": "Laugh", "seconds": 1.5}
+      ]
+    },
+    {
+      "background": "diner", "camera": 2, "subtitles": true,
+      "cast": [{"name": "Lou", "actor": "Billy"}, {"name": "Moe", "actor": "Hiro"}],
+      "lines": [
+        {"sound": "bell service"},
+        {"who": "Lou", "says": "Fine. Then you're buying the pie."},
+        {"who": "Lou", "throws": "Sphere", "at": "Moe", "reaction": "Mad", "hit_sound": "bump"},
+        {"who": "Moe", "exits": "left"}
+      ]
+    }
+  ]
+}
+```
+
+Every scene is checked before anything is built, and errors point at the exact line. The result reports each
+line's frames, the shot list and any problems the review found, and comes with a storyboard picture of the movie.
+Everything it makes is ordinary 3D Movie Maker content: the movie opens and plays the same in the original Studio
+and can be edited further by hand or with the individual tools.
+
 ### Enabling the bridge by hand
 
 Start 3DMMEx with `--automation` (port 7341) or `--automation=PORT`, or set the environment variable

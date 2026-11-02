@@ -35,9 +35,11 @@ const THROW_RELEASE: f64 = 0.6;
 const THROW_SPACING: f64 = 2.0;
 
 const INSTRUCTIONS: &str = "Tools for making movies in Microsoft 3D Movie Maker (1995) through its automation \
-bridge. Typical order: list_backgrounds/preview_cameras -> add_scene -> list_templates/list_actions -> add_actor -> \
-render_frame(overlay) to block -> move_actor/speak_line/animate per actor in time order -> add_text -> \
-review_movie (fix its warnings) and render_frame to check -> save_movie / export_video. Read the resource 3dmm://guide/workflow for details. \
+bridge. Fastest: script_movie(scenes: [...], export: \"/abs/path.mp4\") builds and exports a whole movie from scene \
+scripts (set, cast, lines: says / does / wait / enters / exits / walks_to / throws / sound; subtitles, music) and \
+returns a review plus a storyboard picture; script_scene does one scene. Then refine with the individual tools \
+(add_actor, move_actor, speak_line, animate, physics, arrange_actors, auto_camera, add_text...), check with \
+review_movie and storyboard, and save_movie / export_video. Read the resource 3dmm://guide/workflow for details. \
 The app starts automatically on the first call.";
 
 pub struct ThreeDmmServer {
@@ -1241,8 +1243,10 @@ impl ServerHandler for ThreeDmmServer {
             .and_then(Value::as_str)
             .unwrap_or("a short silly movie");
         let text = format!(
-            "Make a short movie in 3D Movie Maker: {idea}.\n\nFollow this workflow, rendering frames to check your \
-             work as you go, and save the result as a .3mm file.\n\n{WORKFLOW_GUIDE}"
+            "Make a short movie in 3D Movie Maker: {idea}.\n\nStart with script_movie (or script_scene per scene): write \
+             the screenplay as scenes with a set, a cast and lines, and let it build, cut and review the movie. Look \
+             at the storyboard it returns and fix any review warnings, then save the result as a .3mm file and \
+             export an MP4.\n\n{WORKFLOW_GUIDE}"
         );
         Ok(
             GetPromptResult::new(vec![PromptMessage::new_text(Role::User, text)])
