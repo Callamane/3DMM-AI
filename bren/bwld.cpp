@@ -565,6 +565,25 @@ void BWLD::Unprerender(void)
 }
 
 /***************************************************************************
+    Sets whether the background's depth hides actors. Switching rebuilds the
+    whole working Z buffer: the per-render cleanup only touches regions
+    actors were drawn in, which may be none.
+***************************************************************************/
+void BWLD::SetIgnoreBackgroundDepth(bool fIgnore)
+{
+    AssertThis(0);
+
+    if (FPure(fIgnore) == FPure(_fIgnoreBkgdDepth))
+        return;
+    _fIgnoreBkgdDepth = FPure(fIgnore);
+    if (_fIgnoreBkgdDepth)
+        FillPb(_bpmpZ.pixels, LwMul(_bpmpZ.row_bytes, _bpmpZ.height), 0xFF); // farthest
+    else
+        _pzbmpBackground->Draw((uint8_t *)_bpmpZ.pixels, _bpmpZ.row_bytes, _bpmpZ.height, 0, 0, &_rcBuffer, pvNil);
+    _fWorldChanged = fTrue;
+}
+
+/***************************************************************************
     Copy _pregnDirtyWorking from background Z and RGB buffers to working
     Z and RGB buffers.
 ***************************************************************************/

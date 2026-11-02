@@ -97,11 +97,7 @@ class BWLD : public BWLD_PAR
     void MarkRenderedRegn(PGOB pgob, int32_t dxp, int32_t dyp);
     // When set, the background's depth no longer hides actors (used to
     // measure how much of an actor the scenery covers). Off by default.
-    void SetIgnoreBackgroundDepth(bool fIgnore)
-    {
-        _fIgnoreBkgdDepth = fIgnore;
-        _fWorldChanged = fTrue;
-    }
+    void SetIgnoreBackgroundDepth(bool fIgnore);
 
     // Background stuff
     bool FSetBackground(PCRF pcrf, CTG ctgRGB, CNO cnoRGB, CTG ctgZ, CNO cnoZ);
