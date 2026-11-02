@@ -640,6 +640,34 @@ on the way:
     one good angle for where the actors stand (the cave: the others look
     elsewhere or from behind), the scene holds it rather than cut to a
     shot where nobody's face can be read.
+  * Coverage and continuity. arrange_actors now picks, among the spots that
+    work for its camera (up to one depth step further back), the one where
+    the most other cameras show someone's face: at least 30% of the frame
+    height, within 80 degrees of facing the camera, half visible, and on the
+    main camera's side of their line with the nearest partner. It lists
+    these in `other_angles`. Across the 12 stock sets this added angles on
+    the landscape, airplane and cave and never lost any, in 0.1-0.4 s.
+    auto_camera lets a clean single (speaker at least 35% of the frame,
+    facing us, 80% visible, nothing against the lens) trail the best angle by
+    1.75 instead of 0.75 (coverage style only): a two-shot always scores a
+    little higher, so before, a haunted-house exchange held one angle for
+    13 s. It also applies the 180-degree rule. The line runs from the
+    speaker to the nearest character (props don't count). A camera on the
+    other side from the opening camera (FSameSideOfLine, unit tested;
+    cameras within about 11 degrees of the line count as either side)
+    loses 2 points, can't be a clean single, and the shot carries a warning
+    when it's used anyway. In the haunted house every reverse angle was
+    across the line, so the scene now holds its two-shot instead of
+    swapping the pair. On the airplane, Rosa's tall Talk gesture runs off
+    the top of every same-side camera, so her lines go across the line with
+    that warning. Relaxing the top-edge rule for speakers made
+    auto_camera pick oversized close-ups that review_movie then flagged, so
+    the two keep one definition of cut off. script_movie's warning total
+    now includes shot warnings.
+  * Speech vs effects: `ACTR::FSoundInFrm(sty)` can count one sound type.
+    review_movie and auto_camera's own beats treat only speech as someone
+    speaking. A `hit_sound` attached to the target of a throw had made the
+    review warn that the target was "cut off while speaking" as they left.
   * `mood` on a line sets the default gesture (Mad, Laugh, Think...) and the
     prosody. macOS `say` takes embedded `[[rate]]`/`[[volm]]` for every voice,
     but `[[pbas]]` only works for the classic voices, so pitch is shifted

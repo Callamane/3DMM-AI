@@ -177,8 +177,9 @@ The acting follows film habits:
 * `pace` (natural, brisk or slow) sets the beat between lines.
 * Running and sneaking actions really travel.
 * The camera cuts on dialogue, gives each line and each action its own beat, never holds one angle too long and
-  never cuts to a clearly worse one. Entrances and exits stay on the camera they were staged for, so nobody told to
-  leave left is seen leaving right.
+  never cuts to a clearly worse one. It cuts to clean singles and keeps to the 180-degree rule, so the pair never
+  swap sides on screen; entrances and exits stay on the camera they were staged for. Blocking picks a spot that
+  other cameras also cover, so there are angles to cut to.
 
 Every scene is checked before anything is built, and errors point at the exact line. The result reports each
 line's frames, the shot list and any problems the review found, and comes with a storyboard picture of the movie.

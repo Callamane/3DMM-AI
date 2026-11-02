@@ -610,6 +610,12 @@ impl ThreeDmmServer {
                 .as_array()
                 .map(|issues| issues.iter().filter(|i| i["severity"] == "warning").count())
                 .unwrap_or(0);
+            // auto_camera's own warnings (a speaker no angle shows well, a cut
+            // across the line) count too
+            warnings += built["shots"]
+                .as_array()
+                .map(|shots| shots.iter().filter(|s| s.get("warning").is_some()).count())
+                .unwrap_or(0);
             seconds += built["seconds"].as_f64().unwrap_or(0.0);
             scenes.push(built);
         }

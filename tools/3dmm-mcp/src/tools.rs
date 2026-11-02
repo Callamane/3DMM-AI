@@ -690,7 +690,9 @@ pub fn all_tools() -> Vec<ToolSpec> {
              on a shallow arc, partners turned toward each other but open to the camera; line stands them in a \
              row facing the camera. Starts close to the camera and moves the group back or sideways until \
              everyone is fully in shot and at least 80% visible (not hidden by furniture or each other); \
-             reports the spot used and a framing note if nothing worked. Do it before animating: it moves each \
+             among the spots that work (up to one step further back) it picks the one where the most other \
+             cameras see someone's face, so auto_camera has angles to cut to, and lists them in other_angles. \
+             Reports the spot used and a framing note if nothing worked. Do it before animating: it moves each \
              actor's whole current path segment.",
             obj(
                 json!({
@@ -699,6 +701,7 @@ pub fn all_tools() -> Vec<ToolSpec> {
                     "spacing": {"type": "number", "minimum": 0.3, "maximum": 5, "default": 1, "description": "Metres between neighbours."},
                     "x": {"type": "number", "description": "Fix the group's centre (stage metres); default lets it slide to avoid furniture."},
                     "z": {"type": "number", "description": "Fix the group's depth (stage metres); default finds the closest that fits."},
+                    "coverage": {"type": "boolean", "default": true, "description": "Prefer a spot other cameras also cover (false: simply the closest that fits)."},
                     "frame": frame_prop()
                 }),
                 &[],
@@ -1011,7 +1014,7 @@ pub fn all_tools() -> Vec<ToolSpec> {
         bridge(
             "auto_camera",
             "Edit a scene's camera cuts like a film editor. The scene is split at each line of dialogue (each \
-             time an actor starts a sound); every one of the set's camera angles is tried on every line and the \
+             time an actor starts a speech sound, or at the beats given); every one of the set's camera angles is tried on every line and the \
              cuts that best show the speaker (in shot, not hidden, facing us, a good size, near the middle) win, \
              with a cost per cut so it only cuts when the new angle is clearly better and never leaves a shot \
              under min_shot_seconds. style coverage (default) opens wide then goes to singles of whoever speaks \
