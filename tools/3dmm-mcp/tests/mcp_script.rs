@@ -164,6 +164,54 @@ async fn script_scene_builds_a_reviewed_scene() -> Result<()> {
         "the final wait was kept: {state}"
     );
 
+    // Staging: an entrance, a cross to someone and an exit
+    let staged = c
+        .tool(
+            "script_scene",
+            json!({
+                "background": "diner",
+                "camera_style": "wide",
+                "cast": [{"name": "Ann", "actor": "Bella"}, {"name": "Cal", "actor": "Gregory"}],
+                "lines": [
+                    {"who": "Ann", "says": "Anyone here?"},
+                    {"who": "Cal", "enters": "right"},
+                    {"who": "Cal", "walks_to": "Ann"},
+                    {"who": "Cal", "exits": "left"}
+                ]
+            }),
+        )
+        .await?;
+    let lines = staged["lines"].as_array().context("lines")?;
+    ensure!(lines.len() == 4, "{staged}");
+    ensure!(
+        lines[1]["enters"] == "right" && lines[3]["exits"] == "left",
+        "{staged}"
+    );
+    for issue in staged["review"]["issues"].as_array().context("issues")? {
+        ensure!(
+            issue["kind"] != "collision",
+            "staging left people inside each other: {issue}"
+        );
+    }
+    // Cal joins on his cue (not before) and has left after his exit
+    let scene_index = staged["scene_index"].as_i64().context("scene_index")?;
+    c.tool("select_scene", json!({"index": scene_index}))
+        .await?;
+    let on_stage_at = |state: &Value| {
+        state["actors"]
+            .as_array()
+            .and_then(|a| a.iter().find(|a| a["name"] == "Cal"))
+            .map(|a| a["on_stage"] == json!(true))
+            .unwrap_or(false)
+    };
+    let early = c.tool("describe_scene", json!({"frame": 1})).await?;
+    ensure!(!on_stage_at(&early), "Cal waits for his cue: {early}");
+    let late_frame = lines[3]["to"].as_i64().context("exit end")? + 2;
+    let late = c.tool("describe_scene", json!({"frame": late_frame})).await;
+    if let Ok(late) = late {
+        ensure!(!on_stage_at(&late), "Cal has left: {late}");
+    }
+
     c.tool("quit", json!({"discard_changes": true})).await.ok();
     Ok(())
 }

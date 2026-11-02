@@ -744,7 +744,10 @@ pub fn all_tools() -> Vec<ToolSpec> {
              list and any problems to fix. Characters without a voice each get a different one. If the movie \
              already has scenes it checkpoints first. Afterwards everything can be refined with the normal \
              tools. Example lines: {\"who\": \"Frank\", \"says\": \"Those are my fries.\"}, \
-             {\"who\": \"Greg\", \"does\": \"Laugh\", \"seconds\": 2}, {\"wait\": 1}.",
+             {\"who\": \"Greg\", \"does\": \"Laugh\", \"seconds\": 2}, {\"wait\": 1}, \
+             {\"who\": \"Rita\", \"enters\": \"left\"}, {\"who\": \"Greg\", \"walks_to\": \"Rita\"}, \
+             {\"who\": \"Rita\", \"throws\": \"Sphere\", \"at\": \"Greg\", \"reaction\": \"Mad\"}, \
+             {\"who\": \"Frank\", \"exits\": \"right\"}. Walks step around people; throws use physics.",
             obj(
                 json!({
                     "background": {"type": "string", "description": "Set name or a word from its description (\"diner\", \"haunted\")."},
@@ -772,7 +775,13 @@ pub fn all_tools() -> Vec<ToolSpec> {
                                 "action": {"type": ["string", "integer"], "description": "With says: how to act it (default Talk)."},
                                 "does": {"type": ["string", "integer"], "description": "An action to do instead of speaking."},
                                 "seconds": {"type": "number", "description": "With does: how long (default 2)."},
-                                "wait": {"type": "number", "description": "A pause in seconds."}
+                                "wait": {"type": "number", "description": "A pause in seconds."},
+                                "enters": {"type": "string", "enum": ["left", "right"], "description": "Walks on from off-screen to their place (they start off stage)."},
+                                "exits": {"type": "string", "enum": ["left", "right"], "description": "Walks off-screen and leaves the stage."},
+                                "walks_to": {"description": "A character (stops beside them and faces them) or a stage point {x, z}."},
+                                "throws": {"type": "string", "description": "A prop to throw (\"Sphere\" makes a ball), with 'at'."},
+                                "at": {"type": "string", "description": "With throws: who it's thrown at."},
+                                "reaction": {"type": ["string", "integer"], "description": "With throws: the target's action if hit."}
                             }
                         }
                     },

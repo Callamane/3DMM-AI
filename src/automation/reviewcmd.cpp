@@ -358,9 +358,12 @@ static bool _FReviewScene(Request &req, PMVIE pmvie, int32_t iscen, std::vector<
         {
             bool fSpeaking = _FSpeaking(track, range);
             bool fListening = !fSpeaking && _FOtherSpeaking(vecTracks, track, range);
-            add(fListening ? "info" : "warning", "hidden", range, track.strName,
+            // Passing behind something on the way in or out is staging, not a mistake
+            bool fPassing = !fSpeaking && _FMoving(track, range);
+            add(fListening || fPassing ? "info" : "warning", "hidden", range, track.strName,
                 track.strName + " is mostly hidden behind " + track.mapHiddenBy.at(range.from) +
-                    (fSpeaking ? " while speaking" : (fListening ? " while someone else speaks" : "")),
+                    (fSpeaking ? " while speaking"
+                               : (fListening ? " while someone else speaks" : (fPassing ? " while walking" : ""))),
                 "move them (arrange_actors does a group), spread the actors out sideways (x) or pick a camera "
                 "from another side");
         }

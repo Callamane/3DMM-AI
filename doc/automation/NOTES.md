@@ -577,6 +577,21 @@ on the way:
   auto_camera, the transition and review_movie. Characters without a voice
   get different installed voices (preferred list first, then any English
   voice from `say -v ?`). The pie movie (26 s, two scenes) took two calls.
+* Staging in scripts: `enters`/`exits` (left or right), `walks_to` (a
+  character or a point) and `throws` (a prop `at` someone, with an optional
+  `reaction`). The parser checks staging order (nobody acts before entering
+  or after exiting; nobody walks up to or throws at someone off stage).
+  Entering characters are blocked with the group, then removed and re-added
+  on their cue just past the screen edge at their mark's depth (from the
+  camera's visible floor) and walk in with the template's walk (first
+  travelling action named like a walk, not backwards), turning to the
+  nearest character. Exits walk off-screen and `remove_actor(mode: exit)`.
+  Crosses stop 0.8 m short of the character and then on the nearest free
+  spot (`clear_spot`: 0.65 m from anyone, preferring the camera side).
+  Throws add the prop at hand height beside the thrower and use `physics`;
+  a hit with a reaction animates the target from the impact frame. The
+  closing pause holds someone still on stage. review_movie notes, rather
+  than warns about, an actor briefly hidden while walking and not speaking.
 * auto_camera penalises a shot where another actor covers over 45% of the
   frame (someone pressed against the lens), and the framing score drops
   faster for subjects bigger than ideal than for ones a little small.

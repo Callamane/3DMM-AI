@@ -206,6 +206,105 @@ impl ThreeDmmServer {
         Ok(result)
     }
 
+    /// The action an actor walks with: its first travelling action named like
+    /// a walk (not backwards), else any travelling action. Null keeps the
+    /// current one (move_actor then says what's wrong).
+    async fn walking_action(
+        &self,
+        template: &str,
+        cache: &mut HashMap<String, Value>,
+        timeout: Duration,
+    ) -> Value {
+        if let Some(walk) = cache.get(template) {
+            return walk.clone();
+        }
+        let actions = self
+            .bridge_call("list_actions", json!({"template": template}), timeout)
+            .await
+            .map(|r| r["actions"].as_array().cloned().unwrap_or_default())
+            .unwrap_or_default();
+        let travels: Vec<&Value> = actions
+            .iter()
+            .filter(|a| a["travels"] == json!(true))
+            .collect();
+        let named = |a: &&&Value| a["name"].as_str().unwrap_or_default().to_lowercase();
+        let walk = travels
+            .iter()
+            .find(|a| named(a).contains("walk") && !named(a).contains("back"))
+            .or_else(|| travels.first())
+            .map(|a| a["name"].clone())
+            .unwrap_or(Value::Null);
+        cache.insert(template.to_string(), walk.clone());
+        walk
+    }
+
+    /// Walks an actor to a stage point from `frame`; returns the arrival frame
+    async fn walk(
+        &self,
+        who: &str,
+        to: (f64, f64),
+        action: &Value,
+        frame: i64,
+        timeout: Duration,
+    ) -> anyhow::Result<i64> {
+        let mut args = json!({"actor": who, "path": [{"x": to.0, "z": to.1}], "frame": frame});
+        if !action.is_null() {
+            args["action"] = action.clone();
+        }
+        let walked = self.bridge_call("move_actor", args, timeout).await?;
+        Ok(walked["end_frame"]
+            .as_i64()
+            .unwrap_or(frame + 1)
+            .max(frame + 1))
+    }
+
+    /// Where everyone else on stage stands (stage x, z) at a frame
+    async fn others_positions(
+        &self,
+        who: &str,
+        frame: i64,
+        timeout: Duration,
+    ) -> anyhow::Result<Vec<(f64, f64)>> {
+        let scene = self
+            .bridge_call("describe_scene", json!({"frame": frame}), timeout)
+            .await?;
+        Ok(scene["actors"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter(|a| a["name"].as_str() != Some(who) && a["on_stage"] == json!(true))
+            .map(|a| {
+                let stage = &a["position"]["stage"];
+                (
+                    stage["x"].as_f64().unwrap_or(0.0),
+                    stage["z"].as_f64().unwrap_or(0.0),
+                )
+            })
+            .collect())
+    }
+
+    /// An actor's stage position (x, z) at a frame
+    async fn stage_position(
+        &self,
+        who: &str,
+        frame: i64,
+        timeout: Duration,
+    ) -> anyhow::Result<(f64, f64)> {
+        let scene = self
+            .bridge_call("describe_scene", json!({"frame": frame}), timeout)
+            .await?;
+        let actor = scene["actors"]
+            .as_array()
+            .and_then(|a| a.iter().find(|a| a["name"].as_str() == Some(who)))
+            .ok_or_else(|| anyhow::anyhow!("{who} isn't in the scene at frame {frame}"))?;
+        let stage = &actor["position"]["stage"];
+        Ok((
+            stage["x"].as_f64().unwrap_or(0.0),
+            stage["z"].as_f64().unwrap_or(0.0),
+        ))
+    }
+
     /// Builds a whole scene from a script: set, cast, blocking, every line in
     /// order, title, camera cuts and transition, then reviews it.
     async fn script_scene(
@@ -269,6 +368,68 @@ impl ThreeDmmServer {
             notes.push(format!("blocking: {framing}"));
         }
 
+        // Everyone's place in the blocking (stage x, z), and where the
+        // screen edges are, for entrances and exits
+        let blocked = self
+            .bridge_call("describe_scene", json!({"frame": 1}), timeout)
+            .await
+            .map_err(step("describe_scene".into()))?;
+        let mut marks: HashMap<String, (f64, f64)> = HashMap::new();
+        for actor in blocked["actors"].as_array().cloned().unwrap_or_default() {
+            if let Some(name) = actor["name"].as_str() {
+                let stage = &actor["position"]["stage"];
+                marks.insert(
+                    name.to_string(),
+                    (
+                        stage["x"].as_f64().unwrap_or(0.0),
+                        stage["z"].as_f64().unwrap_or(0.0),
+                    ),
+                );
+            }
+        }
+        let floor = blocked["camera"]["visible_floor"].clone();
+        let edge = |key: &str| {
+            (
+                floor[key]["x"].as_f64().unwrap_or(0.0),
+                floor[key]["z"].as_f64().unwrap_or(0.0),
+            )
+        };
+        let offstage = |side: script::Side, z: f64| match side {
+            script::Side::Left => {
+                script::offstage_x(edge("bottom_left"), edge("middle_left"), z, 1.0, side)
+            }
+            script::Side::Right => {
+                script::offstage_x(edge("bottom_right"), edge("middle_right"), z, 1.0, side)
+            }
+        };
+        // Characters who enter later leave the blocking and come back on cue
+        let mut on_stage: Vec<String> = Vec::new();
+        for member in &script.cast {
+            if script::starts_off_stage(&member.name, &script.lines) {
+                self.bridge_call(
+                    "remove_actor",
+                    json!({"actor": member.name, "mode": "delete"}),
+                    timeout,
+                )
+                .await
+                .map_err(step(format!(
+                    "holding {} back for their entrance",
+                    member.name
+                )))?;
+            } else {
+                on_stage.push(member.name.clone());
+            }
+        }
+        let template_of = |who: &str| {
+            script
+                .cast
+                .iter()
+                .find(|c| c.name == who)
+                .map(|c| c.actor.clone())
+                .unwrap_or_default()
+        };
+        let mut walks: HashMap<String, Value> = HashMap::new();
+
         // The lines, one after another
         let mut frame: i64 = 1;
         let mut played = Vec::new();
@@ -320,6 +481,158 @@ impl ThreeDmmServer {
                 script::Line::Wait { seconds } => {
                     frame += (seconds * 6.0).round().max(1.0) as i64;
                 }
+                script::Line::Enter { who, side } => {
+                    let (x, z) = marks.get(who).copied().unwrap_or((0.0, 1.5));
+                    let facing = if *side == script::Side::Left {
+                        "right"
+                    } else {
+                        "left"
+                    };
+                    self.bridge_call(
+                        "add_actor",
+                        json!({"template": template_of(who), "name": who, "facing": facing, "frame": frame,
+                               "position": {"x": offstage(*side, z), "z": z}}),
+                        timeout,
+                    )
+                    .await
+                    .map_err(step(format!("lines[{i}] ({who} enters)")))?;
+                    let walk = self
+                        .walking_action(&template_of(who), &mut walks, timeout)
+                        .await;
+                    let end = self
+                        .walk(who, (x, z), &walk, frame, timeout)
+                        .await
+                        .map_err(step(format!("lines[{i}] ({who} enters)")))?;
+                    on_stage.push(who.clone());
+                    if let Some(other) = nearest(&marks, &on_stage, who) {
+                        self.bridge_call(
+                            "rotate_actor",
+                            json!({"actor": who, "face": other, "frame": end}),
+                            timeout,
+                        )
+                        .await
+                        .map_err(step(format!("lines[{i}] ({who} turns to {other})")))?;
+                    }
+                    played.push(json!({"line": i, "who": who, "enters": format!("{side:?}").to_lowercase(), "from": frame, "to": end - 1}));
+                    frame = end;
+                }
+                script::Line::Exit { who, side } => {
+                    let (_, z) = self.stage_position(who, frame, timeout).await?;
+                    let walk = self
+                        .walking_action(&template_of(who), &mut walks, timeout)
+                        .await;
+                    let end = self
+                        .walk(who, (offstage(*side, z), z), &walk, frame, timeout)
+                        .await
+                        .map_err(step(format!("lines[{i}] ({who} exits)")))?;
+                    self.bridge_call(
+                        "remove_actor",
+                        json!({"actor": who, "mode": "exit", "frame": end}),
+                        timeout,
+                    )
+                    .await
+                    .map_err(step(format!("lines[{i}] ({who} leaves the stage)")))?;
+                    on_stage.retain(|n| n != who);
+                    played.push(json!({"line": i, "who": who, "exits": format!("{side:?}").to_lowercase(), "from": frame, "to": end - 1}));
+                    frame = end;
+                }
+                script::Line::WalkTo { who, target } => {
+                    let (dest, face) = match target {
+                        script::Target::Point { x, z } => ((*x, *z), None),
+                        script::Target::Actor(other) => {
+                            // Stop a little short of them, on the side we come from
+                            let me = self.stage_position(who, frame, timeout).await?;
+                            let them = self.stage_position(other, frame, timeout).await?;
+                            let (dx, dz) = (me.0 - them.0, me.1 - them.1);
+                            let len = (dx * dx + dz * dz).sqrt().max(1e-6);
+                            (
+                                (them.0 + dx / len * 0.8, them.1 + dz / len * 0.8),
+                                Some(other.clone()),
+                            )
+                        }
+                    };
+                    // Stop where nobody (or nothing) already stands
+                    let others = self.others_positions(who, frame, timeout).await?;
+                    let dest = script::clear_spot(dest, &others);
+                    let walk = self
+                        .walking_action(&template_of(who), &mut walks, timeout)
+                        .await;
+                    let end = self
+                        .walk(who, dest, &walk, frame, timeout)
+                        .await
+                        .map_err(step(format!("lines[{i}] ({who} walks)")))?;
+                    if let Some(other) = &face {
+                        self.bridge_call(
+                            "rotate_actor",
+                            json!({"actor": who, "face": other, "frame": end}),
+                            timeout,
+                        )
+                        .await
+                        .map_err(step(format!("lines[{i}] ({who} turns to {other})")))?;
+                    }
+                    marks.insert(who.clone(), dest);
+                    let target_json = match &face {
+                        Some(other) => json!(other),
+                        None => json!({"x": dest.0, "z": dest.1}),
+                    };
+                    played.push(json!({"line": i, "who": who, "walks_to": target_json, "from": frame, "to": end - 1}));
+                    frame = end;
+                }
+                script::Line::Throw {
+                    who,
+                    prop,
+                    at,
+                    reaction,
+                } => {
+                    let me = self.stage_position(who, frame, timeout).await?;
+                    let them = self.stage_position(at, frame, timeout).await?;
+                    let (dx, dz) = (them.0 - me.0, them.1 - me.1);
+                    let len = (dx * dx + dz * dz).sqrt().max(1e-6);
+                    // From the thrower's hand, a little toward the target
+                    let name = format!("{prop} {}", i + 1);
+                    self.bridge_call(
+                        "add_actor",
+                        json!({"template": prop, "name": name, "frame": frame,
+                               "position": {"x": me.0 + dx / len * 0.45, "z": me.1 + dz / len * 0.45, "y": 1.0}}),
+                        timeout,
+                    )
+                    .await
+                    .map_err(step(format!("lines[{i}] ({who} throws a {prop})")))?;
+                    let thrown = self
+                        .bridge_call(
+                            "physics",
+                            json!({"actor": name, "to": at, "height": 0.6, "spin": "tumble", "frame": frame}),
+                            timeout,
+                        )
+                        .await
+                        .map_err(step(format!("lines[{i}] ({who} throws at {at})")))?;
+                    let impacts = thrown["impacts"].as_array().cloned().unwrap_or_default();
+                    let hit = impacts
+                        .iter()
+                        .find(|imp| imp["hit"].as_str() == Some(at.as_str()));
+                    let mut next = impacts
+                        .first()
+                        .and_then(|imp| imp["frame"].as_i64())
+                        .unwrap_or(thrown["end_frame"].as_i64().unwrap_or(frame + 6))
+                        + 3;
+                    if let (Some(hit), Some(reaction)) = (hit, reaction) {
+                        let hit_frame = hit["frame"].as_i64().unwrap_or(frame);
+                        let reacted = self
+                            .bridge_call(
+                                "animate",
+                                json!({"actor": at, "action": reaction, "seconds": 1.5, "frame": hit_frame}),
+                                timeout,
+                            )
+                            .await
+                            .map_err(step(format!("lines[{i}] ({at} reacts)")))?;
+                        next = next.max(reacted["end_frame"].as_i64().unwrap_or(hit_frame + 9));
+                    }
+                    if hit.is_none() {
+                        notes.push(format!("lines[{i}]: the {prop} missed {at}"));
+                    }
+                    played.push(json!({"line": i, "who": who, "throws": prop, "at": at, "hit": hit.is_some(), "from": frame, "to": next - 1}));
+                    frame = next;
+                }
             }
         }
 
@@ -329,13 +642,21 @@ impl ThreeDmmServer {
             .as_i64()
             .unwrap_or(frame);
         if last < frame - 1 {
-            self.bridge_call(
-                "animate",
-                json!({"actor": script.cast[0].name, "action": 0, "frames": frame - 1 - last, "frame": last}),
-                timeout,
-            )
-            .await
-            .map_err(step("holding the final pause".into()))?;
+            // Someone still on stage stands at rest through it
+            match on_stage.first() {
+                Some(holder) => {
+                    self.bridge_call(
+                        "animate",
+                        json!({"actor": holder, "action": 0, "frames": frame - 1 - last, "frame": last}),
+                        timeout,
+                    )
+                    .await
+                    .map_err(step("holding the final pause".into()))?;
+                }
+                None => {
+                    notes.push("everyone has left, so the scene ends with the last exit".into())
+                }
+            }
         }
 
         if let Some(title) = &script.title {
@@ -538,6 +859,17 @@ impl ThreeDmmServer {
         }
         (content, failed)
     }
+}
+
+/// The on-stage character standing nearest to `who`, by their marks
+fn nearest(marks: &HashMap<String, (f64, f64)>, on_stage: &[String], who: &str) -> Option<String> {
+    let (x, z) = *marks.get(who)?;
+    on_stage
+        .iter()
+        .filter(|n| n.as_str() != who)
+        .filter_map(|n| marks.get(n).map(|(ox, oz)| (n, (ox - x).hypot(oz - z))))
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(n, _)| n.clone())
 }
 
 /// Error text for the model: bridge errors with their code, others with context.

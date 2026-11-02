@@ -28,6 +28,46 @@ pub enum Line {
     },
     /// Nobody starts anything for `seconds`
     Wait { seconds: f64 },
+    /// `who` walks on from off-screen `side` to their place in the group
+    Enter { who: String, side: Side },
+    /// `who` walks off-screen to `side` and leaves the stage
+    Exit { who: String, side: Side },
+    /// `who` walks to a point or up to another character, then faces them
+    WalkTo { who: String, target: Target },
+    /// `who` throws a new `prop` at another character, who may react
+    Throw {
+        who: String,
+        prop: String,
+        at: String,
+        reaction: Option<Value>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Side {
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Target {
+    Point { x: f64, z: f64 },
+    Actor(String),
+}
+
+impl Line {
+    /// The character the line is about, if any
+    pub fn who(&self) -> Option<&str> {
+        match self {
+            Line::Say { who, .. }
+            | Line::Do { who, .. }
+            | Line::Enter { who, .. }
+            | Line::Exit { who, .. }
+            | Line::WalkTo { who, .. }
+            | Line::Throw { who, .. } => Some(who),
+            Line::Wait { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -121,13 +161,15 @@ pub fn parse(args: &Value) -> Result<Script, String> {
     let mut lines = Vec::new();
     for (i, line) in lines_json.iter().enumerate() {
         let at = format!("lines[{i}]");
-        let kinds = ["says", "does", "wait"]
+        let kinds = LINE_KINDS
             .iter()
             .filter(|k| line.get(**k).is_some())
             .count();
         if kinds != 1 {
             return Err(format!(
-                "{at}: give exactly one of 'says' (dialogue), 'does' (an action) or 'wait' (seconds)"
+                "{at}: give exactly one of 'says' (dialogue), 'does' (an action), 'wait' (seconds), \
+                 'enters' / 'exits' (\"left\" or \"right\"), 'walks_to' (a character or {{x, z}}) or 'throws' \
+                 (a prop, with 'at')"
             ));
         }
         if line.get("wait").is_some() {
@@ -141,7 +183,66 @@ pub fn parse(args: &Value) -> Result<Script, String> {
             return Err(format!("{at}: '{who}' is not in the cast ({})", names()));
         };
         let who = member.name.clone();
-        if let Some(text) = string(line, "says") {
+        let me = who.clone();
+        let cast_name = |key: &str| -> Result<String, String> {
+            let name = string(line, key).ok_or(format!("{at}: '{key}' must name a character"))?;
+            let found = cast
+                .iter()
+                .find(|c| c.name.eq_ignore_ascii_case(&name))
+                .ok_or(format!("{at}: '{name}' is not in the cast ({})", names()))?;
+            if found.name == me {
+                return Err(format!("{at}: '{me}' can't {key} themselves"));
+            }
+            Ok(found.name.clone())
+        };
+        if line.get("enters").is_some() || line.get("exits").is_some() {
+            let key = if line.get("enters").is_some() {
+                "enters"
+            } else {
+                "exits"
+            };
+            let side = match string(line, key)
+                .as_deref()
+                .map(str::to_lowercase)
+                .as_deref()
+            {
+                Some("left") => Side::Left,
+                Some("right") => Side::Right,
+                _ => return Err(format!("{at}: '{key}' must be \"left\" or \"right\"")),
+            };
+            lines.push(if key == "enters" {
+                Line::Enter { who, side }
+            } else {
+                Line::Exit { who, side }
+            });
+        } else if let Some(target) = line.get("walks_to") {
+            let target = if target.is_string() {
+                Target::Actor(cast_name("walks_to")?)
+            } else {
+                match (
+                    target.get("x").and_then(Value::as_f64),
+                    target.get("z").and_then(Value::as_f64),
+                ) {
+                    (Some(x), Some(z)) => Target::Point { x, z },
+                    _ => {
+                        return Err(format!(
+                        "{at}: 'walks_to' must be a character or a stage point {{x, z}} in metres"
+                    ))
+                    }
+                }
+            };
+            lines.push(Line::WalkTo { who, target });
+        } else if line.get("throws").is_some() {
+            let prop = string(line, "throws").ok_or(format!(
+                "{at}: 'throws' must be a prop to throw (\"Sphere\" makes a ball; list_templates type prop)"
+            ))?;
+            lines.push(Line::Throw {
+                who,
+                prop,
+                at: cast_name("at")?,
+                reaction: line.get("reaction").cloned(),
+            });
+        } else if let Some(text) = string(line, "says") {
             lines.push(Line::Say {
                 who,
                 text,
@@ -170,6 +271,7 @@ pub fn parse(args: &Value) -> Result<Script, String> {
     if !lines.iter().any(|l| !matches!(l, Line::Wait { .. })) {
         return Err("'lines' needs at least one line that someone says or does".into());
     }
+    check_staging(&cast, &lines)?;
 
     Ok(Script {
         background,
@@ -181,6 +283,128 @@ pub fn parse(args: &Value) -> Result<Script, String> {
         cast,
         lines,
     })
+}
+
+const LINE_KINDS: [&str; 7] = [
+    "says", "does", "wait", "enters", "exits", "walks_to", "throws",
+];
+
+/// Characters whose first line is an entrance start off stage
+pub fn starts_off_stage(cast_member: &str, lines: &[Line]) -> bool {
+    lines
+        .iter()
+        .find(|l| {
+            l.who() == Some(cast_member)
+                || matches!(l, Line::Throw { at, .. } if at == cast_member)
+                || matches!(l, Line::WalkTo { target: Target::Actor(a), .. } if a == cast_member)
+        })
+        .is_some_and(|l| matches!(l, Line::Enter { who, .. } if who == cast_member))
+}
+
+/// Characters can only act while on stage: not before they enter, not
+/// after they exit (unless they enter again), and nobody throws at or walks
+/// up to someone who isn't there.
+fn check_staging(cast: &[CastMember], lines: &[Line]) -> Result<(), String> {
+    let mut on_stage: Vec<(String, bool)> = cast
+        .iter()
+        .map(|c| (c.name.clone(), !starts_off_stage(&c.name, lines)))
+        .collect();
+    let here = |on_stage: &Vec<(String, bool)>, name: &str| {
+        on_stage.iter().any(|(n, on)| n == name && *on)
+    };
+    for (i, line) in lines.iter().enumerate() {
+        let at = format!("lines[{i}]");
+        let Some(who) = line.who() else { continue };
+        match line {
+            Line::Enter { .. } => {
+                if here(&on_stage, who) {
+                    return Err(format!("{at}: {who} enters but is already on stage"));
+                }
+            }
+            _ if !here(&on_stage, who) => {
+                return Err(format!(
+                    "{at}: {who} isn't on stage here (they haven't entered yet, or have exited)"
+                ));
+            }
+            _ => {}
+        }
+        for other in match line {
+            Line::Throw { at, .. } => vec![at.as_str()],
+            Line::WalkTo {
+                target: Target::Actor(a),
+                ..
+            } => vec![a.as_str()],
+            _ => vec![],
+        } {
+            if !here(&on_stage, other) {
+                return Err(format!("{at}: {other} isn't on stage at this point"));
+            }
+        }
+        if let Some(entry) = on_stage.iter_mut().find(|(n, _)| n == who) {
+            match line {
+                Line::Enter { .. } => entry.1 = true,
+                Line::Exit { .. } => entry.1 = false,
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Stage x just past the left or right screen edge at depth z, from the
+/// camera's visible floor (x at the bottom and middle of the screen and the
+/// depths where they were measured)
+pub fn offstage_x(
+    edge_near: (f64, f64),
+    edge_far: (f64, f64),
+    z: f64,
+    margin: f64,
+    side: Side,
+) -> f64 {
+    let ((x0, z0), (x1, z1)) = (edge_near, edge_far);
+    let t = if (z1 - z0).abs() > 1e-6 {
+        (z - z0) / (z1 - z0)
+    } else {
+        0.0
+    };
+    let x = x0 + (x1 - x0) * t;
+    match side {
+        Side::Left => x - margin,
+        Side::Right => x + margin,
+    }
+}
+
+/// Clearance kept between a walker's stopping spot and anyone else
+const STOP_CLEARANCE: f64 = 0.65;
+
+/// The free spot nearest `spot` (stage x, z): `spot` itself if nobody stands
+/// within STOP_CLEARANCE of it, else the closest of rings of candidates
+/// around it. `taken` are others' positions.
+pub fn clear_spot(spot: (f64, f64), taken: &[(f64, f64)]) -> (f64, f64) {
+    let free = |p: (f64, f64)| {
+        taken
+            .iter()
+            .all(|t| (t.0 - p.0).hypot(t.1 - p.1) >= STOP_CLEARANCE)
+    };
+    if free(spot) {
+        return spot;
+    }
+    for ring in 1..=6 {
+        let r = ring as f64 * 0.25;
+        // Toward the camera first (lower z), so the walker stays in view
+        let mut best: Option<(f64, f64)> = None;
+        for k in 0..16 {
+            let a = std::f64::consts::TAU * k as f64 / 16.0;
+            let p = (spot.0 + r * a.sin(), spot.1 - r * a.cos());
+            if free(p) && best.is_none_or(|b| p.1 < b.1 - 1e-9) {
+                best = Some(p);
+            }
+        }
+        if let Some(p) = best {
+            return p;
+        }
+    }
+    spot
 }
 
 /// Installed voices from `say -v '?'` output: (name, locale)
@@ -304,6 +528,101 @@ mod tests {
         assert!(parse(&only_waits)
             .unwrap_err()
             .contains("at least one line"));
+    }
+
+    fn staged(lines: Value) -> Result<Script, String> {
+        parse(&json!({
+            "background": "diner",
+            "cast": [{"name": "Ann", "actor": "Bella"}, {"name": "Bob", "actor": "Gregory"}],
+            "lines": lines
+        }))
+    }
+
+    #[test]
+    fn parses_staging_lines() {
+        let script = staged(json!([
+            {"who": "Bob", "enters": "left"},
+            {"who": "Bob", "walks_to": "ann"},
+            {"who": "Ann", "throws": "Sphere", "at": "Bob", "reaction": "Mad"},
+            {"who": "Ann", "walks_to": {"x": 1, "z": 2}},
+            {"who": "Bob", "exits": "RIGHT"}
+        ]))
+        .unwrap();
+        assert!(matches!(
+            &script.lines[0],
+            Line::Enter {
+                side: Side::Left,
+                ..
+            }
+        ));
+        assert!(
+            matches!(&script.lines[1], Line::WalkTo { target: Target::Actor(a), .. } if a == "Ann")
+        );
+        assert!(
+            matches!(&script.lines[2], Line::Throw { at, reaction: Some(_), .. } if at == "Bob")
+        );
+        assert!(
+            matches!(&script.lines[3], Line::WalkTo { target: Target::Point { x, z }, .. } if *x == 1.0 && *z == 2.0)
+        );
+        assert!(matches!(
+            &script.lines[4],
+            Line::Exit {
+                side: Side::Right,
+                ..
+            }
+        ));
+        assert!(starts_off_stage("Bob", &script.lines));
+        assert!(!starts_off_stage("Ann", &script.lines));
+    }
+
+    #[test]
+    fn rejects_impossible_staging() {
+        let err = staged(json!([{"who": "Bob", "says": "Hi"}, {"who": "Bob", "enters": "left"}]))
+            .unwrap_err();
+        assert!(
+            err.contains("lines[1]") && err.contains("already on stage"),
+            "{err}"
+        );
+        let err = staged(json!([{"who": "Bob", "exits": "left"}, {"who": "Bob", "says": "Bye"}]))
+            .unwrap_err();
+        assert!(
+            err.contains("lines[1]") && err.contains("isn't on stage"),
+            "{err}"
+        );
+        let err = staged(
+            json!([{"who": "Bob", "exits": "left"}, {"who": "Ann", "throws": "Cube", "at": "Bob"}]),
+        )
+        .unwrap_err();
+        assert!(err.contains("Bob isn't on stage"), "{err}");
+        let err = staged(json!([{"who": "Ann", "walks_to": "Ann"}])).unwrap_err();
+        assert!(err.contains("themselves"), "{err}");
+        let err = staged(json!([{"who": "Ann", "enters": "up"}])).unwrap_err();
+        assert!(err.contains("\"left\" or \"right\""), "{err}");
+        // Exit and come back is fine
+        assert!(staged(json!([{"who": "Bob", "exits": "left"}, {"who": "Bob", "enters": "right"}, {"who": "Bob", "says": "Back!"}])).is_ok());
+    }
+
+    #[test]
+    fn walks_stop_on_a_free_spot() {
+        assert_eq!(clear_spot((1.0, 2.0), &[(3.0, 2.0)]), (1.0, 2.0));
+        let taken = [(1.0, 2.0), (1.6, 2.0)];
+        let spot = clear_spot((1.1, 2.0), &taken);
+        for t in taken {
+            assert!(
+                (t.0 - spot.0).hypot(t.1 - spot.1) >= STOP_CLEARANCE - 1e-9,
+                "{spot:?}"
+            );
+        }
+        assert!(spot.1 < 2.0, "steps toward the camera: {spot:?}");
+    }
+
+    #[test]
+    fn offstage_is_past_the_screen_edge() {
+        // Left edge at x=-2 near (z=0) widening to x=-5 far (z=3)
+        let x = offstage_x((-2.0, 0.0), (-5.0, 3.0), 1.5, 1.0, Side::Left);
+        assert!((x - -4.5).abs() < 1e-9, "{x}");
+        let x = offstage_x((2.0, 0.0), (5.0, 3.0), 3.0, 1.0, Side::Right);
+        assert!((x - 6.0).abs() < 1e-9, "{x}");
     }
 
     #[test]
