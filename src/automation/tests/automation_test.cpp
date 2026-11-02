@@ -515,6 +515,15 @@ TEST(AutomationDirecting, ShortShotsMergeIntoNeighbours)
     cams = {0, 1, 0};
     HoldShortShots({1, 20, 40}, 60, 9, &cams);
     EXPECT_EQ(cams, (std::vector<int32_t>{0, 1, 0}));
+    // Given the scores, a short shot goes to whichever neighbour's camera
+    // shows it better (an actor running out of the close-up keeps the wide)
+    cams = {0, 1, 2, 0};
+    std::vector<std::vector<double>> score{{5, 1, 1}, {1, 5, 4}, {1, 1, 5}, {5, 1, 1}};
+    std::vector<int32_t> camsUnscored = cams;
+    HoldShortShots({1, 20, 24, 40}, 60, 9, &camsUnscored);
+    EXPECT_EQ(camsUnscored, (std::vector<int32_t>{0, 0, 2, 0}));
+    HoldShortShots({1, 20, 24, 40}, 60, 9, &cams, &score);
+    EXPECT_EQ(cams, (std::vector<int32_t>{0, 2, 2, 0}));
 }
 
 TEST(AutomationDirecting, FramingPrefersHalfTheFrame)
@@ -529,4 +538,32 @@ TEST(AutomationDirecting, FramingPrefersHalfTheFrame)
     EXPECT_GT(DFramingScore(0.75, 0.8), DFramingScore(0.45, 0.8));
     // A face filling the frame is worse than a slightly small figure
     EXPECT_LT(DFramingScore(1.3, 0.8), DFramingScore(0.5, 0.8));
+}
+
+TEST(AutomationDirecting, PacedEditingCutsOnDialogueAndAvoidsLongHolds)
+{
+    // Two speakers alternating; the wide shot (0) is slightly better for both
+    // than their singles (1 for A, 2 for B). Unpaced, the wide shot holds.
+    std::vector<std::vector<double>> score{{7.4, 7.2, 4}, {7.3, 4, 6.7}, {7.4, 7.2, 4}, {7.3, 4, 6.7}};
+    std::vector<int32_t> starts{1, 30, 60, 90};
+    std::vector<bool> speakerChange{false, true, true, true};
+    EXPECT_EQ(VecChooseShots(score, 0.4), (std::vector<int32_t>{0, 0, 0, 0}));
+    // Paced: cuts on speaker changes are cheap, and holding the wide shot
+    // past 6 s (36 frames) costs, so it goes to the singles
+    ShotPacing pacing{0.4, 0.25, 36, 0.05, 0.75};
+    auto cams = VecChooseShotsPaced(score, starts, 120, speakerChange, pacing);
+    int ccut = 0;
+    for (size_t i = 1; i < cams.size(); i++)
+        ccut += cams[i] != cams[i - 1];
+    EXPECT_GE(ccut, 2) << "a 20 s exchange shouldn't be one static shot";
+    // A short exchange stays on the best shot: no hold cost yet
+    auto brief = VecChooseShotsPaced({{7.4, 7.2, 4}, {7.3, 4, 6.7}}, {1, 12}, 24, {false, true}, pacing);
+    EXPECT_EQ(brief, (std::vector<int32_t>{0, 0}));
+    // A clearly bad angle is never chosen just to add variety
+    auto noBad = VecChooseShotsPaced({{7, -3}, {7, -3}, {7, -3}}, {1, 40, 80}, 120, {false, false, false}, pacing);
+    EXPECT_EQ(noBad, (std::vector<int32_t>{0, 0, 0}));
+    // Nor a merely worse one (0.8 below the best): a long hold beats it
+    auto worse = VecChooseShotsPaced({{6.1, 5.3}, {7.0, 3.9}, {6.1, 5.3}, {7.0, 3.9}}, {1, 30, 60, 90}, 120,
+                                     {false, true, true, true}, pacing);
+    EXPECT_EQ(worse, (std::vector<int32_t>{0, 0, 0, 0}));
 }

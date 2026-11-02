@@ -30,30 +30,38 @@ struct ShotStyle
     double dFramingWeight;
     double dListenerWeight;
     double dCutPenalty;
-    double dIdealHeight;  // speaker's on-screen height as a share of the frame
-    double dCentreWeight; // how much keeping the speaker near the middle matters
-    double dFaceFront;    // speaker facing us (up to a 3/4 view)
-    double dFaceSide;     // in profile
-    double dFaceBack;     // turned away
+    double dIdealHeight;       // speaker's on-screen height as a share of the frame
+    double dCentreWeight;      // how much keeping the speaker near the middle matters
+    double dFaceFront;         // speaker facing us (up to a 3/4 view)
+    double dFaceSide;          // in profile
+    double dFaceBack;          // turned away
+    double dSpeakerCutShare;   // a cut where the speaker changes costs this share of a cut
+    double dHoldSeconds;       // a shot held longer starts to cost...
+    double dHoldPenaltyPerSec; // ...this much per second
 };
 const ShotStyle krgstyle[] = {
     // establish wide, then singles on whoever speaks (shot / reverse shot)
-    {"coverage", 2.5, 0.2, 0.4, 0.8, 1.0, 1.5, 0.6, -1.0},
+    {"coverage", 2.5, 0.2, 0.4, 0.8, 1.0, 1.5, 0.6, -1.0, 0.25, 6, 0.3},
     // keep everyone in frame, few cuts
-    {"wide", 1.2, 1.0, 1.2, 0.5, 0.3, 0.8, 0.3, 0},
+    {"wide", 1.2, 1.0, 1.2, 0.5, 0.3, 0.8, 0.3, 0, 0.5, 12, 0.12},
 };
 const double kdMinShotSecondsDefault = 2;
 const double kdVisibleMinShot = 0.5; // less of the speaker showing is not a shot of them
 const double kdFacingFront = 80;     // degrees from facing the camera that still show the face (3/4 view)
 const double kdFacingSide = 110;     // profile
 const double kdScoreMissing = -3;
+const double kdFaceReadableShare = 1.5; // facing credit scales with framing up to this (2/3 framing = full)
+const double kdComparableShot = 0.75;   // pacing only cuts between angles this close to the best
 const double kdLensShare = 0.45;        // another actor covering this much of the frame blocks the shot
 const double kdScoreLensBlocked = -2.5; // speaker not in shot
+const double kdScoreOtherSide = -10;    // a beat pinned to one camera, from another
 
 struct Beat
 {
     int32_t nfrmStart;
-    int32_t itrack; // speaker in the roll call, or -1 for an establishing beat
+    int32_t itrack;          // speaker in the roll call, or -1 for an establishing beat
+    bool fSpeaks = true;     // a line, not an action: their face matters
+    int32_t icamPinned = -1; // shown only from this camera (an entrance or exit keeps its screen direction)
 };
 
 // Scores the current camera for a beat at the current frame
@@ -100,6 +108,9 @@ static double _DScoreShot(PMVIE pmvie, const std::vector<PACTR> &vecActors, int3
             // 0 in the middle of the frame, 1 at either edge
             double dOffCentre = std::fabs((rc.xpLeft + rc.xpRight) / 2.0 - rcView.Dxp() / 2.0) / (rcView.Dxp() / 2.0);
             double dFraming = DFramingScore(static_cast<double>(rc.Dyp()) / rcView.Dyp(), style.dIdealHeight);
+            // A face too small to read earns little for facing us
+            if (dFace > 0)
+                dFace *= std::min(1.0, dFraming * kdFaceReadableShare);
             dScoreSpeaker =
                 2 + style.dCentreWeight * (1 - dOffCentre) + style.dFramingWeight * dFraming + dFace + dVisible;
             continue;
@@ -126,6 +137,53 @@ static double _DScoreShot(PMVIE pmvie, const std::vector<PACTR> &vecActors, int3
     if (cOn == 0)
         return 0;
     return dBlocking + 2.5 * cInShot / cOn + (cInShot > 0 ? DFramingScore(dHeightSum / cInShot) : 0);
+}
+
+// Reads beats: [{frame, actor, speaks}] in frame order, actor null (or
+// missing) for a beat on everyone; the actor must be in the scene's roll
+// call. speaks false marks an action, where a turned back is no fault;
+// camera keeps the beat on that camera
+static bool _FBeatsFromArg(Request &req, const Json &jsonBeats, const std::vector<PACTR> &vecActors,
+                           const std::vector<int32_t> &vecCams, std::vector<Beat> *pvecBeats)
+{
+    for (const Json &json : jsonBeats.AsArray())
+    {
+        const Json &jsonFrame = json.Get("frame");
+        if (!json.IsObject() || !jsonFrame.IsNumber())
+            return req.Fail(kszErrBadArgs, "each beat must be {\"frame\": n, \"actor\": name or null}");
+        int32_t nfrm = static_cast<int32_t>(jsonFrame.AsNumber());
+        if (!pvecBeats->empty() && nfrm <= pvecBeats->back().nfrmStart)
+            return req.Fail(kszErrBadArgs, "beats must be in frame order, one per frame");
+        int32_t itrack = -1;
+        if (!json.Get("actor").IsNull())
+        {
+            Request reqT;
+            reqT.args.Set("actor", json.Get("actor"));
+            PACTR pactr;
+            if (!FResolveActor(reqT, "actor", &pactr))
+                return req.Fail(reqT.errCode.c_str(), "beat at frame " + std::to_string(nfrm) + ": " + reqT.errMessage);
+            auto it = std::find(vecActors.begin(), vecActors.end(), pactr);
+            if (it == vecActors.end())
+                return req.Fail(kszErrBadArgs,
+                                "beat at frame " + std::to_string(nfrm) + ": that actor is not in this scene");
+            itrack = static_cast<int32_t>(it - vecActors.begin());
+        }
+        const Json &jsonSpeaks = json.Get("speaks");
+        if (!jsonSpeaks.IsNull() && !jsonSpeaks.IsBool())
+            return req.Fail(kszErrBadArgs,
+                            "beat at frame " + std::to_string(nfrm) + ": 'speaks' must be true or false");
+        const Json &jsonCamera = json.Get("camera");
+        int32_t icamPinned = -1;
+        if (!jsonCamera.IsNull())
+        {
+            icamPinned = jsonCamera.IsNumber() ? static_cast<int32_t>(jsonCamera.AsNumber()) : -1;
+            if (std::find(vecCams.begin(), vecCams.end(), icamPinned) == vecCams.end())
+                return req.Fail(kszErrBadArgs, "beat at frame " + std::to_string(nfrm) +
+                                                   ": 'camera' must be one of the cameras being chosen from");
+        }
+        pvecBeats->push_back({nfrm, itrack, jsonSpeaks.IsNull() || jsonSpeaks.AsBool(), icamPinned});
+    }
+    return fTrue;
 }
 
 static bool _FCmdAutoCamera(Request &req)
@@ -200,9 +258,13 @@ static bool _FCmdAutoCamera(Request &req)
         vecActors.push_back(pactr);
     }
 
-    // Beats: an establishing beat until the first line, then one per line
+    // Beats: the caller's (a script knows where each line and action
+    // starts), or an establishing beat until the first line, then one per line
     std::vector<Beat> vecBeats;
-    for (int32_t nfrm = nfrmFirst; nfrm <= nfrmLast; nfrm++)
+    const Json &jsonBeats = req.args.Get("beats");
+    if (jsonBeats.IsArray() && jsonBeats.Size() > 0 && !_FBeatsFromArg(req, jsonBeats, vecActors, vecCams, &vecBeats))
+        return fFalse;
+    for (int32_t nfrm = nfrmFirst; vecBeats.empty() && nfrm <= nfrmLast; nfrm++)
     {
         if (!pscen->FGotoFrm(nfrm))
             return FFailEngine(req, "could not go to frame " + std::to_string(nfrm));
@@ -216,6 +278,8 @@ static bool _FCmdAutoCamera(Request &req)
             }
         }
     }
+    while (!vecBeats.empty() && vecBeats.back().nfrmStart > nfrmLast)
+        vecBeats.pop_back();
     if (vecBeats.empty() || vecBeats.front().nfrmStart > nfrmFirst)
         vecBeats.insert(vecBeats.begin(), {nfrmFirst, -1});
 
@@ -224,6 +288,11 @@ static bool _FCmdAutoCamera(Request &req)
     RC rcView(0, 0, 544, 306);
     if (PmvuCur() != pvNil)
         PmvuCur()->GetRc(&rcView, cooLocal);
+    // The scene's opening camera isn't an event, so replaying the scene
+    // doesn't bring it back after cameras are tried directly: remember it
+    if (!pscen->FGotoFrm(nfrmFirst))
+        return FFailEngine(req, "could not go to the first frame");
+    int32_t icamOpening = pbkgd->Icam();
     std::vector<std::vector<double>> vecvecScore(vecBeats.size(), std::vector<double>(vecCams.size(), 1e9));
     std::vector<std::vector<bool>> vecvecFaceAway(vecBeats.size(), std::vector<bool>(vecCams.size(), false));
     for (size_t ibeat = 0; ibeat < vecBeats.size(); ibeat++)
@@ -241,20 +310,43 @@ static bool _FCmdAutoCamera(Request &req)
                     return FFailEngine(req, "could not try camera " + std::to_string(vecCams[icam]));
                 bool fFaceAway = false;
                 double d = _DScoreShot(pmvie, vecActors, vecBeats[ibeat].itrack, rcView, *pstyle, &fFaceAway);
-                if (fFaceAway)
+                if (fFaceAway && vecBeats[ibeat].fSpeaks)
                     vecvecFaceAway[ibeat][icam] = true;
                 vecvecScore[ibeat][icam] = std::fmin(vecvecScore[ibeat][icam], d);
             }
         }
     }
-    // Back to the cameras the scene's own events set (scoring set them directly)
+    // Back to the scene's own cameras (scoring set them directly)
+    pbkgd->FSetCamera(pmvie->Pbwld(), icamOpening);
     FGotoFrameFresh(pscen, nfrmFirst);
 
-    std::vector<int32_t> vecChoice = VecChooseShots(vecvecScore, dCutPenalty);
+    // Entrances and exits are staged for one camera: from another side
+    // someone told to leave left would leave right
+    for (size_t ibeat = 0; ibeat < vecBeats.size(); ibeat++)
+    {
+        for (size_t icam = 0; icam < vecCams.size() && vecBeats[ibeat].icamPinned >= 0; icam++)
+        {
+            if (vecCams[icam] != vecBeats[ibeat].icamPinned)
+                vecvecScore[ibeat][icam] = kdScoreOtherSide;
+        }
+    }
+
+    // Paced like an editor: cut on dialogue, don't hold one angle too long
+    std::vector<int32_t> vecStarts;
+    std::vector<bool> vecSpeakerChange;
+    for (size_t ibeat = 0; ibeat < vecBeats.size(); ibeat++)
+    {
+        vecStarts.push_back(vecBeats[ibeat].nfrmStart);
+        vecSpeakerChange.push_back(ibeat > 0 && vecBeats[ibeat].itrack != vecBeats[ibeat - 1].itrack);
+    }
+    ShotPacing pacing{dCutPenalty, pstyle->dSpeakerCutShare, static_cast<int32_t>(pstyle->dHoldSeconds * kfps),
+                      pstyle->dHoldPenaltyPerSec / kfps, kdComparableShot};
+    std::vector<int32_t> vecChoice =
+        VecChooseShotsPaced(vecvecScore, vecStarts, nfrmLast + 1, vecSpeakerChange, pacing);
     std::vector<int32_t> vecBeatStart;
     for (const Beat &beat : vecBeats)
         vecBeatStart.push_back(beat.nfrmStart);
-    HoldShortShots(vecBeatStart, nfrmLast + 1, static_cast<int32_t>(dMinShot * kfps + 0.5), &vecChoice);
+    HoldShortShots(vecBeatStart, nfrmLast + 1, static_cast<int32_t>(dMinShot * kfps + 0.5), &vecChoice, &vecvecScore);
 
     // Apply: walk the scene and change the camera wherever it differs (a
     // change back to the previous camera removes an old cut)
