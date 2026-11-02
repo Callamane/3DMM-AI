@@ -720,7 +720,7 @@ on the way:
       scene (from 2.12, but no longer counting backdrop swaps and far shots
       as angles), no shot over 10 s except where holding is right (the
       black set's one view and the cave dialogue, listed in the test with
-      reasons; from six 15 s holds), built in about 2.5 minutes.
+      reasons; from six 15 s holds), built in 2.5 to 3.5 minutes.
   * Speech vs effects: `ACTR::FSoundInFrm(sty)` can count one sound type.
     review_movie and auto_camera's own beats treat only speech as someone
     speaking. A `hit_sound` attached to the target of a throw had made the
