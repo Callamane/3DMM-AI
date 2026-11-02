@@ -320,6 +320,34 @@ async fn script_scene_builds_a_reviewed_scene() -> Result<()> {
         .to_string();
     ensure!(err.contains("existing scene"), "{err}");
 
+    // A finished short: 3D title and end cards around the scenes, a line
+    // with a mood and the listener's reaction, brisk pacing
+    c.tool("new_movie", json!({"discard_changes": true}))
+        .await?;
+    let acted = json!({"background": "diner", "cast": cast, "pace": "brisk", "lines": [
+        {"who": "Ann", "says": "We won!", "mood": "excited", "reaction": "Laugh"},
+        {"who": "Bob", "does": "Jump", "seconds": 1}]});
+    let short = c
+        .tool(
+            "script_movie",
+            json!({"title_card": "TEST", "end_card": {"text": "THE END", "action": "The Wave"},
+                   "scenes": [acted]}),
+        )
+        .await?;
+    let state = c.tool("get_state", json!({"all_scenes": true})).await?;
+    ensure!(
+        state["movie"]["scene_count"] == 3,
+        "title card, scene, end card: {state} {short}"
+    );
+    for card in [0, 2] {
+        c.tool("select_scene", json!({"index": card})).await?;
+        let words = c.tool("describe_scene", json!({"frame": 1})).await?;
+        ensure!(
+            words["actors"].as_array().map(Vec::len) == Some(1),
+            "a card is one 3D word: {words}"
+        );
+    }
+
     c.tool("quit", json!({"discard_changes": true})).await.ok();
     Ok(())
 }

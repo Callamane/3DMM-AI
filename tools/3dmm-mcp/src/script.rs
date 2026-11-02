@@ -19,6 +19,11 @@ pub enum Line {
         who: String,
         text: String,
         action: Option<Value>,
+        mood: Option<Mood>,
+        /// Who the line is said to (default: the nearest character on stage)
+        to: Option<String>,
+        /// What the listener does over the end of the line ("Laugh", "Think")
+        reaction: Option<Value>,
     },
     /// `who` does `action` on the spot for `seconds`
     Do {
@@ -82,6 +87,8 @@ pub struct Script {
     pub camera: Option<i64>,
     pub title: Option<String>,
     pub layout: String,
+    /// Frames of breathing room after each line ("pace")
+    pub beat_frames: i64,
     pub camera_style: String,
     pub transition: Option<String>,
     /// Caption every spoken line at the bottom while it is said
@@ -90,9 +97,93 @@ pub struct Script {
     pub music: Option<String>,
     pub cast: Vec<CastMember>,
     pub lines: Vec<Line>,
+    /// Set dressing placed before the action starts
+    pub props: Vec<Prop>,
+}
+
+/// How a line is delivered: the gesture, and how the voice is changed
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Mood {
+    Angry,
+    Excited,
+    Happy,
+    Sad,
+    Scared,
+    Whisper,
+    Thinking,
+    Shout,
+}
+
+/// Voice changes for a mood: speaking rate (words a minute), volume (0..1)
+/// and pitch (1 = unchanged, applied after synthesis)
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Prosody {
+    pub rate: Option<u32>,
+    pub volume: Option<f64>,
+    pub pitch: f64,
+}
+
+impl Mood {
+    pub const NAMES: [&'static str; 8] = [
+        "angry", "excited", "happy", "sad", "scared", "whisper", "thinking", "shout",
+    ];
+
+    pub fn parse(name: &str) -> Option<Mood> {
+        Some(match name.to_lowercase().as_str() {
+            "angry" | "mad" => Mood::Angry,
+            "excited" => Mood::Excited,
+            "happy" | "cheerful" => Mood::Happy,
+            "sad" => Mood::Sad,
+            "scared" | "afraid" | "nervous" => Mood::Scared,
+            "whisper" | "whispering" | "quiet" => Mood::Whisper,
+            "thinking" | "thoughtful" | "puzzled" => Mood::Thinking,
+            "shout" | "shouting" | "yell" => Mood::Shout,
+            _ => return None,
+        })
+    }
+
+    /// The standard action that acts it (every stock actor but a few
+    /// animals and robots has these)
+    pub fn action(self) -> &'static str {
+        match self {
+            Mood::Angry | Mood::Shout => "Yell",
+            Mood::Sad => "Mad, Sad",
+            Mood::Thinking => "Think",
+            _ => "Talk",
+        }
+    }
+
+    pub fn prosody(self) -> Prosody {
+        let p = |rate, volume, pitch| Prosody {
+            rate,
+            volume,
+            pitch,
+        };
+        match self {
+            Mood::Angry => p(Some(200), None, 1.04),
+            Mood::Excited => p(Some(210), None, 1.07),
+            Mood::Happy => p(Some(195), None, 1.05),
+            Mood::Sad => p(Some(140), Some(0.8), 0.94),
+            Mood::Scared => p(Some(225), None, 1.08),
+            Mood::Whisper => p(Some(160), Some(0.35), 1.0),
+            Mood::Thinking => p(Some(150), None, 0.98),
+            Mood::Shout => p(Some(190), Some(1.0), 1.03),
+        }
+    }
+}
+
+/// A prop standing in the scene from the start
+#[derive(Debug, Clone, PartialEq)]
+pub struct Prop {
+    /// Prop template (list_templates type prop), e.g. "Treasure chest"
+    pub prop: String,
+    pub name: String,
+    pub place: Target,
 }
 
 const MAX_CAST: usize = 8;
+const MAX_PROPS: usize = 12;
+const PROP_KEYS: &[&str] = &["prop", "name", "at", "beside"];
 const MAX_LINES: usize = 200;
 const MAX_SECONDS: f64 = 60.0;
 
@@ -130,6 +221,8 @@ const SCENE_KEYS: &[&str] = &[
     "music",
     "cast",
     "lines",
+    "props",
+    "pace",
     "preview",
     "replace",
 ];
@@ -147,6 +240,8 @@ const LINE_KEYS: &[&str] = &[
     "at",
     "reaction",
     "hit_sound",
+    "mood",
+    "to",
     "sound",
     "on",
 ];
@@ -189,6 +284,16 @@ pub fn parse(args: &Value) -> Result<Script, String> {
     if layout != "conversation" && layout != "line" {
         return Err("'layout' must be \"conversation\" or \"line\"".into());
     }
+    let beat_frames = match string(args, "pace").as_deref() {
+        None | Some("natural") => 2,
+        Some("brisk") => 0,
+        Some("slow") => 5,
+        Some(other) => {
+            return Err(format!(
+                "'pace' must be \"brisk\", \"natural\" or \"slow\", not \"{other}\""
+            ))
+        }
+    };
     let camera_style = string(args, "camera_style").unwrap_or_else(|| "coverage".into());
     if !["coverage", "wide", "none"].contains(&camera_style.as_str()) {
         return Err("'camera_style' must be \"coverage\", \"wide\" or \"none\"".into());
@@ -336,10 +441,24 @@ pub fn parse(args: &Value) -> Result<Script, String> {
                 hit_sound: string(line, "hit_sound"),
             });
         } else if let Some(text) = string(line, "says") {
+            let mood = match string(line, "mood") {
+                Some(name) => Some(Mood::parse(&name).ok_or(format!(
+                    "{at}: 'mood' must be one of {}",
+                    Mood::NAMES.join(", ")
+                ))?),
+                None => None,
+            };
+            let to = match line.get("to") {
+                Some(_) => Some(cast_name("to")?),
+                None => None,
+            };
             lines.push(Line::Say {
                 who,
                 text,
                 action: line.get("action").cloned(),
+                mood,
+                to,
+                reaction: line.get("reaction").cloned(),
             });
         } else if line.get("says").is_some() {
             return Err(format!("{at}: 'says' must be the words to speak"));
@@ -368,12 +487,14 @@ pub fn parse(args: &Value) -> Result<Script, String> {
         return Err("'lines' needs at least one line that someone says or does".into());
     }
     check_staging(&cast, &lines)?;
+    let props = parse_props(args, &cast)?;
 
     Ok(Script {
         background,
         camera: args.get("camera").and_then(whole_number),
         title: string(args, "title"),
         layout,
+        beat_frames,
         camera_style,
         transition: string(args, "transition"),
         subtitles: args
@@ -383,6 +504,7 @@ pub fn parse(args: &Value) -> Result<Script, String> {
         music: string(args, "music"),
         cast,
         lines,
+        props,
     })
 }
 
@@ -586,6 +708,129 @@ pub fn assign_movie_voices(scripts: &mut [Script], installed: &[(String, String)
     }
 }
 
+/// The scene's props: each a template placed at a stage point or beside a
+/// character who is on stage when the scene starts
+fn parse_props(args: &Value, cast: &[CastMember]) -> Result<Vec<Prop>, String> {
+    let Some(list) = args.get("props") else {
+        return Ok(Vec::new());
+    };
+    let list = list
+        .as_array()
+        .ok_or("'props' must be a list of {prop, at: {x, z}} or {prop, beside: character}")?;
+    if list.len() > MAX_PROPS {
+        return Err(format!("at most {MAX_PROPS} props per scene"));
+    }
+    let mut props: Vec<Prop> = Vec::new();
+    for (i, item) in list.iter().enumerate() {
+        let at = format!("props[{i}]");
+        check_keys(item, PROP_KEYS, &format!("{at}: "))?;
+        let prop = string(item, "prop").ok_or(format!(
+            "{at}: 'prop' must name a prop (list_templates type prop), e.g. \"Treasure chest\""
+        ))?;
+        let name = string(item, "name").unwrap_or_else(|| format!("{prop} {}", i + 1));
+        if cast.iter().any(|c| c.name.eq_ignore_ascii_case(&name))
+            || props.iter().any(|p| p.name.eq_ignore_ascii_case(&name))
+        {
+            return Err(format!("{at}: the name '{name}' is already taken"));
+        }
+        let place = match (item.get("at"), string(item, "beside")) {
+            (Some(point), None) => match (
+                point.get("x").and_then(Value::as_f64),
+                point.get("z").and_then(Value::as_f64),
+            ) {
+                (Some(x), Some(z)) => Target::Point { x, z },
+                _ => {
+                    return Err(format!(
+                        "{at}: 'at' must be a stage point {{x, z}} in metres"
+                    ))
+                }
+            },
+            (None, Some(who)) => Target::Actor(
+                cast.iter()
+                    .find(|c| c.name.eq_ignore_ascii_case(&who))
+                    .map(|c| c.name.clone())
+                    .ok_or(format!("{at}: '{who}' is not in the cast"))?,
+            ),
+            _ => {
+                return Err(format!(
+                    "{at}: give either 'at' {{x, z}} or 'beside' a character"
+                ))
+            }
+        };
+        props.push(Prop { prop, name, place });
+    }
+    Ok(props)
+}
+
+/// Where a prop goes beside a character standing at `mark`: a metre
+/// further out from the group's centre, so it doesn't land between people
+pub fn beside_spot(mark: (f64, f64), group_centre: (f64, f64)) -> (f64, f64) {
+    let (dx, dz) = (mark.0 - group_centre.0, mark.1 - group_centre.1);
+    let len = dx.hypot(dz);
+    if len < 1e-6 {
+        (mark.0 + 1.0, mark.1)
+    } else {
+        (mark.0 + dx / len, mark.1 + dz / len)
+    }
+}
+
+/// A title or end card: a short scene with an animated 3D word, the way
+/// 3D Movie Maker movies open and close
+#[derive(Debug, Clone, PartialEq)]
+pub struct Card {
+    pub text: String,
+    pub background: String,
+    /// A 3D word action ("Spin Letters", "The Wave", "Hop", "Grow and Shrink"...)
+    pub action: String,
+    pub seconds: f64,
+    pub music: Option<String>,
+    pub caption: Option<String>,
+}
+
+const CARD_KEYS: &[&str] = &[
+    "text",
+    "background",
+    "action",
+    "seconds",
+    "music",
+    "caption",
+];
+
+/// Parses a title_card / end_card: a string (the words) or an object
+pub fn parse_card(value: &Value, key: &str, default_action: &str) -> Result<Card, String> {
+    let at = format!("{key}: ");
+    let (text, object) = match value {
+        Value::String(text) => (text.trim().to_string(), None),
+        Value::Object(_) => {
+            check_keys(value, CARD_KEYS, &at)?;
+            (string(value, "text").unwrap_or_default(), Some(value))
+        }
+        _ => {
+            return Err(format!(
+                "'{key}' must be the card's words or {{text, background, action, seconds, music}}"
+            ))
+        }
+    };
+    if text.is_empty() || text.chars().count() > 40 {
+        return Err(format!(
+            "{at}the text must be 1-40 characters (it becomes a 3D word)"
+        ));
+    }
+    let get = |k: &str| object.and_then(|o| string(o, k));
+    let seconds = match object.and_then(|o| o.get("seconds")) {
+        Some(_) => seconds(object.unwrap(), "seconds", key)?,
+        None => 3.5,
+    };
+    Ok(Card {
+        text,
+        background: get("background").unwrap_or_else(|| "GE-Black".into()),
+        action: get("action").unwrap_or_else(|| default_action.into()),
+        seconds,
+        music: get("music"),
+        caption: get("caption"),
+    })
+}
+
 /// Installed voices from `say -v '?'` output: (name, locale)
 pub fn parse_say_voices(output: &str) -> Vec<(String, String)> {
     output
@@ -648,6 +893,37 @@ pub fn assign_voices(cast: &mut [CastMember], installed: &[(String, String)]) {
 /// plus three words a second), at least two seconds
 pub fn title_seconds(text: &str) -> f64 {
     (1.0 + text.split_whitespace().count() as f64 / 3.0).max(2.0)
+}
+
+/// Where auto_camera should consider a new shot: wherever a line or an
+/// action starts (from the lines as played), on the actor doing it. Comings
+/// and goings are shots of everyone (actor null) from the staging camera
+/// (their left and right are that camera's; another angle would flip them),
+/// so the move itself shows; actions are marked speaks: false (a back turned
+/// while acting is fine).
+/// A line's tail where someone else acts gets its own beat this way instead
+/// of being judged as part of the line.
+pub fn camera_beats(played: &[Value], staging_camera: Option<i64>) -> Vec<Value> {
+    let mut beats: Vec<Value> = Vec::new();
+    for line in played {
+        let (Some(who), Some(from)) = (line["who"].as_str(), line["from"].as_i64()) else {
+            continue;
+        };
+        if beats.last().and_then(|b| b["frame"].as_i64()) >= Some(from) {
+            continue;
+        }
+        if line.get("enters").is_some() || line.get("exits").is_some() {
+            let mut beat = serde_json::json!({"frame": from, "actor": null});
+            if let Some(camera) = staging_camera {
+                beat["camera"] = camera.into();
+            }
+            beats.push(beat);
+        } else {
+            let speaks = line.get("says").is_some();
+            beats.push(serde_json::json!({"frame": from, "actor": who, "speaks": speaks}));
+        }
+    }
+    beats
 }
 
 #[cfg(test)]
@@ -887,6 +1163,98 @@ mod tests {
     }
 
     #[test]
+    fn parses_mood_reaction_and_pace() {
+        let mut script = sample();
+        script["pace"] = json!("slow");
+        script["lines"][0]["mood"] = json!("Angry");
+        script["lines"][0]["to"] = json!("greg");
+        script["lines"][0]["reaction"] = json!("Laugh");
+        let parsed = parse(&script).unwrap();
+        assert_eq!(parsed.beat_frames, 5);
+        match &parsed.lines[0] {
+            Line::Say {
+                mood, to, reaction, ..
+            } => {
+                assert_eq!(*mood, Some(Mood::Angry));
+                assert_eq!(to.as_deref(), Some("Greg"));
+                assert_eq!(reaction, &Some(json!("Laugh")));
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(Mood::Angry.action(), "Yell");
+        assert!(Mood::Sad.prosody().pitch < 1.0 && Mood::Excited.prosody().pitch > 1.0);
+        assert_eq!(
+            parse(&sample()).unwrap().beat_frames,
+            2,
+            "natural pace by default"
+        );
+
+        script["lines"][0]["mood"] = json!("grumpy");
+        assert!(parse(&script)
+            .unwrap_err()
+            .contains("'mood' must be one of"));
+        script["lines"][0]["mood"] = json!("sad");
+        script["lines"][0]["to"] = json!("Frank");
+        assert!(parse(&script).unwrap_err().contains("themselves"));
+        script["lines"][0]["to"] = json!("Greg");
+        script["pace"] = json!("glacial");
+        assert!(parse(&script).unwrap_err().contains("'pace'"));
+    }
+
+    #[test]
+    fn parses_cards() {
+        let card = parse_card(&json!("THE MAP"), "title_card", "Spin Letters").unwrap();
+        assert_eq!(card.text, "THE MAP");
+        assert_eq!(card.background, "GE-Black");
+        assert_eq!(card.action, "Spin Letters");
+        let card = parse_card(
+            &json!({"text": "THE END", "action": "The Wave", "seconds": 2, "music": "small triumph"}),
+            "end_card",
+            "The Wave",
+        )
+        .unwrap();
+        assert_eq!(card.seconds, 2.0);
+        assert_eq!(card.music.as_deref(), Some("small triumph"));
+        assert!(parse_card(&json!(""), "title_card", "Spin").is_err());
+        assert!(
+            parse_card(&json!({"text": "X", "colour": "red"}), "end_card", "Hop")
+                .unwrap_err()
+                .contains("'colour'")
+        );
+        assert!(parse_card(&json!(3), "end_card", "Hop").is_err());
+    }
+
+    #[test]
+    fn parses_props() {
+        let mut script = sample();
+        script["props"] = json!([
+            {"prop": "Treasure chest", "beside": "frank"},
+            {"prop": "Cube", "name": "Crate", "at": {"x": 1, "z": 2}}
+        ]);
+        let parsed = parse(&script).unwrap();
+        assert_eq!(parsed.props.len(), 2);
+        assert_eq!(parsed.props[0].name, "Treasure chest 1");
+        assert_eq!(parsed.props[0].place, Target::Actor("Frank".into()));
+        assert_eq!(parsed.props[1].place, Target::Point { x: 1.0, z: 2.0 });
+
+        script["props"] = json!([{"prop": "Cube", "name": "Greg", "at": {"x": 0, "z": 0}}]);
+        assert!(parse(&script).unwrap_err().contains("already taken"));
+        script["props"] = json!([{"prop": "Cube"}]);
+        assert!(parse(&script).unwrap_err().contains("either 'at'"));
+        script["props"] = json!([{"prop": "Cube", "beside": "Nobody"}]);
+        assert!(parse(&script).unwrap_err().contains("props[0]"));
+    }
+
+    #[test]
+    fn props_go_outside_the_group() {
+        // Right of a group centred at x=0: further right
+        let (x, z) = beside_spot((1.0, 2.0), (0.0, 2.0));
+        assert!((x - 2.0).abs() < 1e-9 && (z - 2.0).abs() < 1e-9);
+        // Standing on the centre: to the right
+        assert_eq!(beside_spot((0.0, 2.0), (0.0, 2.0)), (1.0, 2.0));
+    }
+
+    #[test]
     fn long_entrances_are_shortened() {
         assert_eq!(entrance_x(0.0, 3.0), (3.0, false));
         assert_eq!(entrance_x(1.0, -16.5), (1.0 - MAX_ENTRANCE_WALK, true));
@@ -993,6 +1361,31 @@ mod tests {
         assert_eq!(
             title_seconds("one two three four five six seven eight nine"),
             4.0
+        );
+    }
+
+    #[test]
+    fn camera_beats_follow_lines_and_actions() {
+        let played = vec![
+            json!({"line": 0, "who": "Duke", "enters": "left", "from": 1, "to": 20}),
+            json!({"line": 1, "who": "Duke", "says": "Hi", "from": 21, "to": 40}),
+            json!({"line": 2, "sound": "bump", "at": 41}),
+            json!({"line": 3, "who": "Duke", "does": "Run Scared", "from": 43, "to": 52}),
+            json!({"line": 4, "who": "Rosa", "says": "Hey", "from": 43, "to": 60}),
+            json!({"line": 5, "who": "Rosa", "exits": "right", "from": 61, "to": 70}),
+        ];
+        assert_eq!(
+            camera_beats(&played, Some(2)),
+            vec![
+                json!({"frame": 1, "actor": null, "camera": 2}),
+                json!({"frame": 21, "actor": "Duke", "speaks": true}),
+                json!({"frame": 43, "actor": "Duke", "speaks": false}),
+                json!({"frame": 61, "actor": null, "camera": 2}),
+            ]
+        );
+        assert_eq!(
+            camera_beats(&played[..1], None),
+            vec![json!({"frame": 1, "actor": null})]
         );
     }
 }

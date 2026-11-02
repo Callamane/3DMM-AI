@@ -135,18 +135,22 @@ have only been built and run on macOS; a Windows build is the next thing to try.
 ### A whole movie in one call
 
 `script_movie` takes a screenplay and does the rest: casting, blocking, voices, acting, staging, sound, camera cuts,
-a review and (optionally) the MP4. This call makes a 20-second, two-scene argument in a diner, in a few seconds:
+a review and (optionally) the MP4. This call makes a 27-second, two-scene argument in a diner, with spinning 3D
+title and end cards, in a few seconds:
 
 ```json
 {
   "export": "/Users/me/Movies/argument.mp4",
+  "title_card": {"text": "THE ARGUMENT", "action": "Spin Letters", "music": "curious moment"},
+  "end_card": "THE END",
   "scenes": [
     {
-      "background": "diner", "title": "THE ARGUMENT", "music": "tense", "subtitles": true, "transition": "dissolve",
+      "background": "diner", "music": "tense", "subtitles": true, "transition": "dissolve",
       "cast": [{"name": "Lou", "actor": "Billy"}, {"name": "Moe", "actor": "Hiro"}],
+      "props": [{"prop": "Treasure chest", "beside": "Moe"}],
       "lines": [
-        {"who": "Lou", "says": "You said the game was at eight."},
-        {"who": "Moe", "says": "I said nine. I always say nine."},
+        {"who": "Lou", "says": "You said the game was at eight.", "mood": "angry"},
+        {"who": "Moe", "says": "I said nine. I always say nine.", "mood": "happy", "reaction": "Mad, Sad"},
         {"who": "Lou", "does": "Mad", "seconds": 1.5},
         {"who": "Moe", "does": "Laugh", "seconds": 1.5}
       ]
@@ -164,6 +168,17 @@ a review and (optionally) the MP4. This call makes a 20-second, two-scene argume
   ]
 }
 ```
+
+The acting follows film habits:
+
+* A `mood` (angry, excited, happy, sad, scared, whisper, thinking, shout) sets both the gesture and the delivery:
+  the voice's speed, loudness and pitch.
+* A `reaction` makes the listener (`to`, or whoever is nearest) respond just before the line ends.
+* `pace` (natural, brisk or slow) sets the beat between lines.
+* Running and sneaking actions really travel.
+* The camera cuts on dialogue, gives each line and each action its own beat, never holds one angle too long and
+  never cuts to a clearly worse one. Entrances and exits stay on the camera they were staged for, so nobody told to
+  leave left is seen leaving right.
 
 Every scene is checked before anything is built, and errors point at the exact line. The result reports each
 line's frames, the shot list and any problems the review found, and comes with a storyboard picture of the movie.
@@ -204,7 +219,7 @@ actors by numeric id or name.
 | Text and sound | `add_text`, `edit_text`, `remove_text`, `import_sound`, `attach_sound`, `remove_sound`, `speak_line` (MCP only: text-to-speech dialogue, attached and acted) |
 | Observe and play | `describe_scene`, `describe_timeline` (who does what when), `render_frame` (returns the image; `overlay` draws the stage grid and actor labels), `preview_cameras` (every angle of a set on one image), `storyboard` (a scene's frames on one image, or the whole movie with `all_scenes`), `suggest_camera` (angles ranked for the actors in shot), `auto_camera` (edits a scene's cuts: establishing shot, then the best angle on whoever speaks), `review_movie` (automatic check: actors out of shot, cut off or hidden, unreadable text, dead stretches, each with a fix), `export_frames` (PNG sequence), `play`, `stop` |
 | Export | `export_video` (MCP: MP4 with transitions and all sound, music rendered from MIDI; needs ffmpeg), `export_media` (bridge: frames + audio cues), `export_frames` |
-| MCP only | `script_movie` (a whole multi-scene movie from scene scripts in one call, checked before anything is built, optionally exported), `script_scene` (a whole scene from a script: set, cast, blocking, dialogue with optional subtitles, actions, entrances, exits, crosses and throws, sound effects and music by name, title, cuts and a review, in one call), `batch` (several calls in one) |
+| MCP only | `script_movie` (a whole multi-scene movie from scene scripts in one call, with optional 3D title and end cards, checked before anything is built, optionally exported), `script_scene` (a whole scene from a script: set, cast, props, blocking, dialogue with moods, listener reactions and optional subtitles, pacing, actions, entrances, exits, crosses and throws, sound effects and music by name, title, cuts and a review, in one call), `batch` (several calls in one) |
 
 The MCP server checks arguments against each tool's schema and rejects unknown names (with the list it takes)
 instead of letting a typo fall back to a default target. Background and actor names also match their descriptions,

@@ -31,6 +31,19 @@ const GUIDE_URI: &str = "3dmm://guide/workflow";
 /// third of the way to the target
 const THROW_RELEASE: f64 = 0.6;
 
+/// Widest a title card's 3D word may be, in pixels of the 544-wide picture
+const CARD_MAX_WIDTH_PX: f64 = 440.0;
+
+/// A travelling action in a script ("Run Scared") covers about this much
+/// ground a second, up to a limit, so it reads as going somewhere
+const TRAVEL_METRES_PER_SECOND: f64 = 1.5;
+const TRAVEL_MAX_METRES: f64 = 3.0;
+
+/// A listener's reaction starts this many frames before the line ends...
+const REACTION_LEAD_FRAMES: i64 = 4;
+/// ...and lasts this long (the next line may cut it short)
+const REACTION_SECONDS: f64 = 1.5;
+
 /// Metres between neighbours when the script has a throw in it
 const THROW_SPACING: f64 = 2.0;
 
@@ -205,10 +218,19 @@ impl ThreeDmmServer {
             .to_string();
         let voice = args.get("voice").and_then(Value::as_str);
         let actor = args.get("actor").cloned().unwrap_or(Value::Null);
+        let mood = match args.get("mood").and_then(Value::as_str) {
+            Some(name) => Some(script::Mood::parse(name).ok_or_else(|| {
+                anyhow::anyhow!("'mood' must be one of {}", script::Mood::NAMES.join(", "))
+            })?),
+            None => None,
+        };
         let action_given = args.get("action").cloned();
-        let action = action_given.clone().unwrap_or_else(|| json!("Talk"));
+        let action = action_given
+            .clone()
+            .unwrap_or_else(|| json!(mood.map_or("Talk", script::Mood::action)));
 
-        let wav = speech::synthesize(&text, voice).await?;
+        let prosody = mood.map(script::Mood::prosody);
+        let wav = speech::synthesize(&text, voice, prosody.as_ref()).await?;
         let _remove_wav = RemoveOnDrop(wav.clone());
         let seconds = speech::wav_seconds(&wav)?;
         let label: String = text.chars().take(40).collect();
@@ -314,6 +336,41 @@ impl ThreeDmmServer {
             .unwrap_or(Value::Null);
         cache.insert(template.to_string(), walk.clone());
         walk
+    }
+
+    /// Whether `action` is one of the template's travelling actions (run,
+    /// sneak, crawl...). Unknown actions count as not travelling (animate
+    /// then reports them properly).
+    async fn action_travels(
+        &self,
+        template: &str,
+        action: &Value,
+        cache: &mut HashMap<String, Value>,
+        timeout: Duration,
+    ) -> bool {
+        let Some(wanted) = action
+            .as_str()
+            .map(|a| a.trim_end_matches(" *").trim().to_lowercase())
+        else {
+            return false;
+        };
+        let key = format!("{template}\u{0}actions");
+        if !cache.contains_key(&key) {
+            let actions = self
+                .bridge_call("list_actions", json!({"template": template}), timeout)
+                .await
+                .map(|r| r["actions"].clone())
+                .unwrap_or(Value::Null);
+            cache.insert(key.clone(), actions);
+        }
+        cache[&key].as_array().is_some_and(|actions| {
+            actions.iter().any(|a| {
+                a["travels"] == json!(true)
+                    && a["name"]
+                        .as_str()
+                        .is_some_and(|n| n.trim_end_matches(" *").trim().to_lowercase() == wanted)
+            })
+        })
     }
 
     /// Walks an actor to a stage point from `frame`; returns the arrival frame
@@ -499,6 +556,18 @@ impl ThreeDmmServer {
         timeout: Duration,
     ) -> anyhow::Result<Vec<ContentBlock>> {
         let mut scripts = script::parse_movie(&args).map_err(anyhow::Error::msg)?;
+        let title_card = match args.get("title_card") {
+            Some(v) => Some(
+                script::parse_card(v, "title_card", "Spin Letters").map_err(anyhow::Error::msg)?,
+            ),
+            None => None,
+        };
+        let end_card = match args.get("end_card") {
+            Some(v) => {
+                Some(script::parse_card(v, "end_card", "The Wave").map_err(anyhow::Error::msg)?)
+            }
+            None => None,
+        };
         script::assign_movie_voices(&mut scripts, &speech::installed_voices().await);
         let state = self.bridge_call("get_state", json!({}), timeout).await?;
         let mut notes: Vec<String> = Vec::new();
@@ -517,6 +586,14 @@ impl ThreeDmmServer {
         let mut scenes = Vec::new();
         let mut warnings = 0;
         let mut seconds = 0.0;
+        if let Some(card) = &title_card {
+            let built = self
+                .build_card(card, &mut notes, timeout)
+                .await
+                .map_err(|err| anyhow::anyhow!("title_card: {}", describe_error(&err)))?;
+            seconds += card.seconds;
+            scenes.push(built);
+        }
         for (i, script) in scripts.iter().enumerate() {
             let built = self
                 .build_scene(script, false, timeout)
@@ -534,6 +611,19 @@ impl ThreeDmmServer {
                 .map(|issues| issues.iter().filter(|i| i["severity"] == "warning").count())
                 .unwrap_or(0);
             seconds += built["seconds"].as_f64().unwrap_or(0.0);
+            scenes.push(built);
+        }
+        if let Some(card) = &end_card {
+            let built = self
+                .build_card(card, &mut notes, timeout)
+                .await
+                .map_err(|err| {
+                    anyhow::anyhow!(
+                        "end_card: {} (the movie before it was built)",
+                        describe_error(&err)
+                    )
+                })?;
+            seconds += card.seconds;
             scenes.push(built);
         }
         let mut result = json!({
@@ -580,6 +670,67 @@ impl ThreeDmmServer {
         }
         content.push(ContentBlock::text(result.to_string()));
         Ok(content)
+    }
+
+    /// A title or end card: a scene with the words as an animated 3D word,
+    /// sized to fit, optional music and caption, dissolving to what follows
+    async fn build_card(
+        &self,
+        card: &script::Card,
+        notes: &mut Vec<String>,
+        timeout: Duration,
+    ) -> anyhow::Result<Value> {
+        let scene = self
+            .bridge_call("add_scene", json!({"background": card.background}), timeout)
+            .await?;
+        let word = self
+            .bridge_call(
+                "add_3d_word",
+                json!({"text": card.text, "name": "Card", "frame": 1}),
+                timeout,
+            )
+            .await?;
+        // Fit the words to about 80% of the picture's width
+        let bounds = &word["actor"]["screen_bounds"];
+        let width =
+            bounds["right"].as_f64().unwrap_or(0.0) - bounds["left"].as_f64().unwrap_or(0.0);
+        if width > CARD_MAX_WIDTH_PX {
+            self.bridge_call(
+                "scale_actor",
+                json!({"actor": "Card", "factor": (CARD_MAX_WIDTH_PX / width).max(0.3), "frame": 1}),
+                timeout,
+            )
+            .await?;
+        }
+        self.bridge_call(
+            "animate",
+            json!({"actor": "Card", "action": card.action, "seconds": card.seconds, "frame": 1}),
+            timeout,
+        )
+        .await?;
+        if let Some(music) = &card.music {
+            let id = self.find_sound("music", music, notes, timeout).await?;
+            self.bridge_call(
+                "attach_sound",
+                json!({"sound": id, "target": "scene", "frame": 1}),
+                timeout,
+            )
+            .await?;
+        }
+        if let Some(caption) = &card.caption {
+            self.bridge_call(
+                "add_text",
+                json!({"text": caption, "kind": "caption", "rect": "bottom", "frame": 1, "color": "auto"}),
+                timeout,
+            )
+            .await?;
+        }
+        self.bridge_call("set_transition", json!({"transition": "dissolve"}), timeout)
+            .await?;
+        Ok(
+            json!({"scene_index": scene["scene_index"], "card": card.text, "seconds": card.seconds,
+                  "shots": [], "review": {"verdict": "card", "issues": []}, "notes": [], "cast": []}),
+        )
     }
 
     /// Builds one scene; with `checkpoint`, saves one first if the movie
@@ -742,13 +893,60 @@ impl ThreeDmmServer {
         };
         let mut walks: HashMap<String, Value> = HashMap::new();
 
+        // Set dressing: beside a character (outward from the group) or at a
+        // spot, on a free patch of floor
+        if !script.props.is_empty() {
+            let placed: Vec<(f64, f64)> = on_stage
+                .iter()
+                .filter_map(|n| marks.get(n).copied())
+                .collect();
+            let centre = if placed.is_empty() {
+                (0.0, 1.5)
+            } else {
+                (
+                    placed.iter().map(|p| p.0).sum::<f64>() / placed.len() as f64,
+                    placed.iter().map(|p| p.1).sum::<f64>() / placed.len() as f64,
+                )
+            };
+            let mut taken = placed.clone();
+            for prop in &script.props {
+                let spot = match &prop.place {
+                    script::Target::Point { x, z } => (*x, *z),
+                    script::Target::Actor(who) => {
+                        let mark = marks.get(who).copied().unwrap_or(centre);
+                        script::clear_spot(script::beside_spot(mark, centre), &taken)
+                    }
+                };
+                self.bridge_call(
+                    "add_actor",
+                    json!({"template": prop.prop, "name": prop.name, "frame": 1,
+                           "position": {"x": spot.0, "z": spot.1}}),
+                    timeout,
+                )
+                .await
+                .map_err(step(format!("placing {} ({})", prop.name, prop.prop)))?;
+                taken.push(spot);
+                marks.insert(prop.name.clone(), spot);
+            }
+        }
+
         // The lines, one after another
         let mut frame: i64 = 1;
         let mut played = Vec::new();
         for (i, line) in script.lines.iter().enumerate() {
             match line {
-                script::Line::Say { who, text, action } => {
+                script::Line::Say {
+                    who,
+                    text,
+                    action,
+                    mood,
+                    to,
+                    reaction,
+                } => {
                     let mut a = json!({"actor": who, "text": text, "frame": frame});
+                    if let Some(mood) = mood {
+                        a["mood"] = json!(format!("{mood:?}").to_lowercase());
+                    }
                     if let Some(voice) = script
                         .cast
                         .iter()
@@ -777,12 +975,68 @@ impl ThreeDmmServer {
                         .await
                         .map_err(step(format!("lines[{i}] (subtitle)")))?;
                     }
+                    // The listener reacts over the end of the line, as people do
+                    // before the next one speaks
+                    if let Some(reaction) = reaction {
+                        let listener = to.clone().or_else(|| nearest(&marks, &on_stage, who));
+                        if let Some(listener) = listener {
+                            let at = (end - REACTION_LEAD_FRAMES).max(frame);
+                            self.bridge_call(
+                                "animate",
+                                json!({"actor": listener, "action": reaction, "seconds": REACTION_SECONDS, "frame": at}),
+                                timeout,
+                            )
+                            .await
+                            .map_err(step(format!("lines[{i}] ({listener} reacts)")))?;
+                        }
+                    }
                     played.push(
                         json!({"line": i, "who": who, "says": text, "from": frame, "to": end - 1}),
                     );
                     if let Some(note) = r["note"].as_str() {
                         notes.push(format!("lines[{i}]: {note}"));
                     }
+                    frame = end + script.beat_frames;
+                }
+                script::Line::Do {
+                    who,
+                    action,
+                    seconds,
+                } if self
+                    .action_travels(&template_of(who), action, &mut walks, timeout)
+                    .await =>
+                {
+                    // Running, sneaking, crawling... done on the spot looks like
+                    // running in place: go somewhere, away from the group
+                    let me = self.stage_position(who, frame, timeout).await?;
+                    let placed: Vec<(f64, f64)> = on_stage
+                        .iter()
+                        .filter(|n| *n != who)
+                        .filter_map(|n| marks.get(n).copied())
+                        .collect();
+                    let centre = if placed.is_empty() {
+                        (me.0 - 1.0, me.1)
+                    } else {
+                        (
+                            placed.iter().map(|p| p.0).sum::<f64>() / placed.len() as f64,
+                            placed.iter().map(|p| p.1).sum::<f64>() / placed.len() as f64,
+                        )
+                    };
+                    let (dx, dz) = (me.0 - centre.0, me.1 - centre.1);
+                    let len = dx.hypot(dz).max(1e-6);
+                    let distance =
+                        (seconds * TRAVEL_METRES_PER_SECOND).clamp(1.0, TRAVEL_MAX_METRES);
+                    let others = self.others_positions(who, frame, timeout).await?;
+                    let dest = script::clear_spot(
+                        (me.0 + dx / len * distance, me.1 + dz / len * distance),
+                        &others,
+                    );
+                    let end = self
+                        .walk(who, dest, action, frame, timeout)
+                        .await
+                        .map_err(step(format!("lines[{i}] ({who} does {action})")))?;
+                    marks.insert(who.clone(), dest);
+                    played.push(json!({"line": i, "who": who, "does": action, "moves_to": {"x": dest.0, "z": dest.1}, "from": frame, "to": end - 1}));
                     frame = end;
                 }
                 script::Line::Do {
@@ -1044,7 +1298,8 @@ impl ThreeDmmServer {
             let cut = self
                 .bridge_call(
                     "auto_camera",
-                    json!({"scene": scene_index, "style": script.camera_style}),
+                    json!({"scene": scene_index, "style": script.camera_style,
+                           "beats": script::camera_beats(&played, scene["movie"]["scene"]["camera"].as_i64())}),
                     timeout,
                 )
                 .await

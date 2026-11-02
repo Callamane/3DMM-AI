@@ -108,7 +108,9 @@ fn scene_script_properties() -> Value {
                 "properties": {
                     "who": {"type": "string"},
                     "says": {"type": "string"},
-                    "action": {"type": ["string", "integer"], "description": "With says: how to act it (default Talk)."},
+                    "action": {"type": ["string", "integer"], "description": "With says: how to act it (default from mood, else Talk)."},
+                    "mood": {"type": "string", "enum": ["angry", "excited", "happy", "sad", "scared", "whisper", "thinking", "shout"], "description": "With says: delivery: the gesture (angry/shout yell, sad droops, thinking thinks) and the voice's speed, volume and pitch."},
+                    "to": {"type": "string", "description": "With says: who it's said to (default: the nearest character)."},
                     "does": {"type": ["string", "integer"], "description": "An action to do instead of speaking."},
                     "seconds": {"type": "number", "description": "With does: how long (default 2)."},
                     "wait": {"type": "number", "description": "A pause in seconds."},
@@ -117,7 +119,7 @@ fn scene_script_properties() -> Value {
                     "walks_to": {"description": "A character (stops beside them and faces them) or a stage point {x, z}."},
                     "throws": {"type": "string", "description": "A prop to throw (\"Sphere\" makes a ball), with 'at'."},
                     "at": {"type": "string", "description": "With throws: who it's thrown at."},
-                    "reaction": {"type": ["string", "integer"], "description": "With throws: the target's action if hit."},
+                    "reaction": {"type": ["string", "integer"], "description": "With says: the listener's action over the end of the line (\"Laugh\", \"Think\", \"Mad, Sad\"). With throws: the target's action if hit."},
                     "hit_sound": {"type": "string", "description": "With throws: a sound effect on the hit (\"bump\")."},
                     "sound": {"type": "string", "description": "A sound effect by name (list_sounds type sfx), e.g. \"bell service\"; the next line doesn't wait for it."},
                     "on": {"type": "string", "description": "With sound: the character it comes from (default: the scene)."}
@@ -127,6 +129,8 @@ fn scene_script_properties() -> Value {
         "layout": {"type": "string", "enum": ["conversation", "line"], "default": "conversation"},
         "camera_style": {"type": "string", "enum": ["coverage", "wide", "none"], "default": "coverage"},
         "transition": {"type": "string", "description": "Transition after this scene (cut, dissolve, fade_to_black...)."},
+        "props": {"type": "array", "description": "Set dressing from the start: [{prop: \"Treasure chest\", beside: \"Mia\"} or {prop, at: {x, z}}, optional name]. list_templates type prop shows them."},
+        "pace": {"type": "string", "enum": ["brisk", "natural", "slow"], "default": "natural", "description": "Breathing room after each line."},
         "subtitles": {"type": "boolean", "default": false, "description": "Caption each spoken line at the bottom while it is said."},
         "music": {"type": "string", "description": "Scene music by name or mood word (list_sounds type music: \"funny moment\", \"tense\", \"sudden danger\"...), or \"none\" to silence the set's own."}
     })
@@ -875,6 +879,8 @@ pub fn all_tools() -> Vec<ToolSpec> {
                     "target_seconds": {"type": "number", "minimum": 1},
                     "export": {"type": "string", "description": "Absolute .mp4 path to export the finished movie to."},
                     "export_max_megabytes": {"type": "number", "minimum": 1, "description": "With export: keep the MP4 under this size."},
+                    "title_card": {"description": "Opening card: the words (\"THE MAP\") or {text, background (default black), action (3D word action, default \"Spin Letters\"; also \"The Wave\", \"Hop\", \"Grow and Shrink\", \"Cartwheel Letters\"...), seconds (3.5), music, caption}. The words become an animated 3D word, the classic 3D Movie Maker title."},
+                    "end_card": {"description": "Closing card, same form (\"THE END\"; default action \"The Wave\")."},
                     "preview": {"type": "boolean", "default": true, "description": "Return a storyboard of the whole movie (one picture) with the result."}
                 }),
                 &["scenes"],
@@ -896,6 +902,7 @@ pub fn all_tools() -> Vec<ToolSpec> {
                     "actor": actor_ref("Who says it."),
                     "text": {"type": "string", "description": "The line, as it should be spoken."},
                     "voice": {"type": "string", "description": "Speech voice name (default: the system voice)."},
+                    "mood": {"type": "string", "enum": ["angry", "excited", "happy", "sad", "scared", "whisper", "thinking", "shout"], "description": "Delivery: picks the gesture (unless action is given) and changes the voice's speed, volume and pitch."},
                     "action": {"type": ["string", "integer"], "description": "Talking action, e.g. \"Talk\" or \"Yell\" (default \"Talk\"; \"none\" to leave the actor alone, e.g. talking while walking)."},
                     "then": {"type": "string", "enum": ["rest", "freeze"], "default": "rest", "description": "Afterwards: return to the rest pose, or hold the last pose."},
                     "frame": frame_prop()
@@ -1018,7 +1025,8 @@ pub fn all_tools() -> Vec<ToolSpec> {
                     "cut_penalty": {"type": "number", "minimum": 0, "maximum": 10, "description": "Higher means fewer cuts (style default: coverage 0.4, wide 1.2)."},
                     "cameras": {"type": "array", "items": {"type": "integer"}, "description": "Only use these camera angles."},
                     "apply": {"type": "boolean", "default": true},
-                    "verbose": {"type": "boolean", "default": false, "description": "Also return every line's score for every camera."}
+                    "verbose": {"type": "boolean", "default": false, "description": "Also return every line's score for every camera."},
+                    "beats": {"type": "array", "items": {"type": "object", "properties": {"frame": {"type": "integer"}, "actor": {"type": ["string", "null"]}, "speaks": {"type": "boolean", "default": true}, "camera": {"type": "integer", "description": "Only this camera for the beat (an entrance or exit staged for it keeps its screen direction)."}}, "required": ["frame"]}, "description": "Split the scene here instead of at each sound: each beat is a frame and the actor it is about (null for everyone), in frame order; speaks false for an action, where their back to the camera is no fault; camera pins a beat to one angle. Give one per line and per action so an action after a line (someone running off) gets its own shot. script_scene passes these itself."}
                 }),
                 &[],
             ),

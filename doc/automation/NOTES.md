@@ -612,6 +612,49 @@ on the way:
   MP4. "Make me a 30-second movie of two guys arguing in a diner" became
   one call: two scenes, 31.5 s, subtitles, music, a throw and an exit,
   built and exported in 7.4 s with no review warnings.
+* Quality pass (a 46-second two-scene short with cards, built from one call
+  and judged frame by frame): the first version had a single static shot
+  per scene, frozen listeners, flat delivery, actors running on the spot,
+  plain titles and no pauses. Fixes:
+  * auto_camera paces its cuts (`VecChooseShotsPaced`): a cut where the
+    speaker changes costs a quarter of a cut, and a shot held past 6 s
+    (coverage) or 12 s (wide) pays per extra frame. Only angles within 0.75
+    of a beat's best are allowed, so variety never means cutting to a worse
+    shot. Facing credit scales with framing, so a far-off figure facing us
+    doesn't beat a readable profile. It also restores the scene's opening
+    camera after scoring: that camera isn't an event, so replaying didn't
+    bring it back, and a dry run left a different camera in place.
+  * `auto_camera(beats)` takes the script's own beats (frame, actor,
+    speaks). script_scene passes one per line and action (entrances and
+    exits on everyone) instead of splitting only at sound starts. Before,
+    "What was that?!" and the run that followed were one beat; the close
+    two-shot lost Duke mid-run, so the whole line went to a far wide shot
+    where nobody's face could be read. Action beats (speaks false) don't
+    raise the back-to-camera warning. A shot too short to keep now goes to
+    whichever neighbouring angle scores better over it, not always the
+    previous one.
+  * A beat's `camera` pins it to one angle. script_scene pins entrances and
+    exits to the camera they were staged for (from add_scene's state). In
+    the README example, the exit had cut to the reverse angle behind the
+    counter, where "exits left" walked off to the right. When a set has
+    one good angle for where the actors stand (the cave: the others look
+    elsewhere or from behind), the scene holds it rather than cut to a
+    shot where nobody's face can be read.
+  * `mood` on a line sets the default gesture (Mad, Laugh, Think...) and the
+    prosody. macOS `say` takes embedded `[[rate]]`/`[[volm]]` for every voice,
+    but `[[pbas]]` only works for the classic voices, so pitch is shifted
+    afterwards with ffmpeg (asetrate/aresample/atempo; skipped if ffmpeg is
+    missing). Windows passes rate and volume to SAPI. `[[` in the spoken
+    text is broken up so a script can't inject commands.
+  * `reaction` animates the listener (`to`, or the nearest character) from 4
+    frames before the line ends for 1.5 s. `pace` adds 0, 2 or 5 frames
+    between lines.
+  * `props` places set dressing beside a character or at a point after the
+    blocking, outside the group so nobody walks through it.
+  * Travelling actions ("Run Scared *", "Sneak *") move the actor away from
+    the group by 1.5 m per second (1-3 m); before, they ran on the spot.
+  * `title_card` / `end_card` add a black scene with an animated 3D word,
+    scaled to fit 440 px, with optional music and a dissolve.
 * `export_video(max_megabytes)` encodes in two passes at the video bitrate
   that fits the size with the 160 kbit/s soundtrack and 4% container
   headroom. The renderer's 8-bit dithering compresses poorly (the 2-minute
