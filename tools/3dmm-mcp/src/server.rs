@@ -525,8 +525,12 @@ impl ThreeDmmServer {
             }
         }
         if let Some(path) = args.get("export").and_then(Value::as_str) {
+            let mut export_args = json!({"path": path});
+            if let Some(mb) = args.get("export_max_megabytes") {
+                export_args["max_megabytes"] = mb.clone();
+            }
             let exported = self
-                .export_video(json!({"path": path}), timeout)
+                .export_video(export_args, timeout)
                 .await
                 .map_err(|err| {
                     anyhow::anyhow!(
@@ -1065,6 +1069,10 @@ impl ThreeDmmServer {
                 .clamp(0.0, 5.0),
             audio: args.get("audio").and_then(Value::as_bool).unwrap_or(true),
             smooth: args.get("smooth").and_then(Value::as_bool).unwrap_or(false),
+            max_megabytes: args
+                .get("max_megabytes")
+                .and_then(Value::as_f64)
+                .filter(|mb| *mb > 0.0),
         };
 
         // Frames and sounds go to a scratch folder that is removed afterwards

@@ -824,6 +824,7 @@ pub fn all_tools() -> Vec<ToolSpec> {
                     "scenes": {"type": "array", "minItems": 1, "items": {"type": "object", "properties": scene_script_properties(), "required": ["background", "cast", "lines"]}},
                     "target_seconds": {"type": "number", "minimum": 1},
                     "export": {"type": "string", "description": "Absolute .mp4 path to export the finished movie to."},
+                    "export_max_megabytes": {"type": "number", "minimum": 1, "description": "With export: keep the MP4 under this size."},
                     "preview": {"type": "boolean", "default": true, "description": "Return a storyboard of the whole movie (one picture) with the result."}
                 }),
                 &["scenes"],
@@ -994,6 +995,7 @@ pub fn all_tools() -> Vec<ToolSpec> {
                     "scale": {"type": "integer", "enum": [1, 2, 3], "default": 2, "description": "Pixel scale of the 544x306 movie (2 = 1088x612)."},
                     "audio": {"type": "boolean", "default": true},
                     "transition_seconds": {"type": "number", "minimum": 0, "maximum": 5, "default": 1},
+                    "max_megabytes": {"type": "number", "minimum": 1, "description": "Keep the file under this size (e.g. 25 for email and most chat apps): a two-pass encode at the bitrate that fits, instead of constant high quality."},
                     "smooth": {"type": "boolean", "default": false, "description": "Add motion-interpolated in-between frames for smoother movement than the movie's 6 fps (the .3mm is unchanged; fast limbs can smear a little)."},
                     "scene": {"type": "integer", "minimum": 0, "description": "Export only this scene."}
                 }),

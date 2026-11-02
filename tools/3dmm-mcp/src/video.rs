@@ -23,6 +23,37 @@ pub struct VideoOptions {
     /// Motion-interpolate between the movie's 6 fps frames for smoother
     /// movement (some smearing on fast limbs)
     pub smooth: bool,
+    /// Fit the file under this size (two-pass encode at the bitrate that
+    /// fits) instead of encoding at constant quality
+    pub max_megabytes: Option<f64>,
+}
+
+/// Audio bitrate of exports, kbit/s
+const AUDIO_KBPS: f64 = 160.0;
+
+/// Video bitrate (kbit/s) that keeps a file of `seconds` under
+/// `max_megabytes` with the soundtrack included, leaving 4% for the
+/// container; never below a floor that still shows a picture
+pub fn video_kbps_for(max_megabytes: f64, seconds: f64, has_audio: bool) -> f64 {
+    let total_kbit = max_megabytes * 8.0 * 1024.0 * 0.96;
+    let audio_kbit = if has_audio { AUDIO_KBPS * seconds } else { 0.0 };
+    ((total_kbit - audio_kbit) / seconds.max(0.1)).max(100.0)
+}
+
+async fn run_ffmpeg(ffmpeg: &Path, args: &[String]) -> Result<()> {
+    let output = Command::new(ffmpeg)
+        .args(args)
+        .output()
+        .await
+        .with_context(|| format!("running {}", ffmpeg.display()))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "ffmpeg failed: {}",
+            stderr.trim().lines().last().unwrap_or("unknown error")
+        );
+    }
+    Ok(())
 }
 
 /// Filter chain for one scene's frames: optional in-betweens at the movie's
@@ -242,7 +273,7 @@ pub async fn render(manifest: &Value, out: &Path, options: &VideoOptions) -> Res
             "-c:a".into(),
             "aac".into(),
             "-b:a".into(),
-            "160k".into(),
+            format!("{AUDIO_KBPS}k"),
         ]);
     }
     args.extend([
@@ -250,32 +281,56 @@ pub async fn render(manifest: &Value, out: &Path, options: &VideoOptions) -> Res
         "libx264".into(),
         "-pix_fmt".into(),
         "yuv420p".into(),
-        "-crf".into(),
-        "18".into(),
         "-movflags".into(),
         "+faststart".into(),
         "-t".into(),
         format!("{:.3}", plan.total),
     ]);
-    args.push(out.to_string_lossy().into_owned());
-
-    let output = Command::new(&ffmpeg)
-        .args(&args)
-        .output()
-        .await
-        .with_context(|| format!("running {}", ffmpeg.display()))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!(
-            "ffmpeg failed: {}",
-            stderr.trim().lines().last().unwrap_or("unknown error")
-        );
+    match options.max_megabytes {
+        None => {
+            args.extend([
+                "-crf".into(),
+                "18".into(),
+                out.to_string_lossy().into_owned(),
+            ]);
+            run_ffmpeg(&ffmpeg, &args).await?;
+        }
+        Some(megabytes) => {
+            // Two passes: the first measures, the second spends the bits
+            let kbps = video_kbps_for(megabytes, plan.total, has_audio);
+            let log = out.with_extension("2pass");
+            let scratch = out.with_extension("pass1.mp4");
+            let pass = |n: &str, target: &Path| {
+                let mut a = args.clone();
+                a.extend([
+                    "-b:v".into(),
+                    format!("{kbps:.0}k"),
+                    "-pass".into(),
+                    n.into(),
+                    "-passlogfile".into(),
+                    log.to_string_lossy().into_owned(),
+                    target.to_string_lossy().into_owned(),
+                ]);
+                a
+            };
+            let first = run_ffmpeg(&ffmpeg, &pass("1", &scratch)).await;
+            let _ = std::fs::remove_file(&scratch);
+            let second = match first {
+                Ok(()) => run_ffmpeg(&ffmpeg, &pass("2", out)).await,
+                Err(err) => Err(err),
+            };
+            for suffix in ["2pass-0.log", "2pass-0.log.mbtree"] {
+                let _ = std::fs::remove_file(out.with_extension(suffix));
+            }
+            second?;
+        }
     }
     let bytes = std::fs::metadata(out).map(|m| m.len()).unwrap_or(0);
     Ok(json!({
         "path": out.to_string_lossy(),
         "seconds": (plan.total * 100.0).round() / 100.0,
         "smooth": options.smooth,
+        "max_megabytes": options.max_megabytes,
         "width": width,
         "height": height,
         "scenes": scenes.len(),
@@ -288,6 +343,17 @@ pub async fn render(manifest: &Value, out: &Path, options: &VideoOptions) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn size_cap_leaves_room_for_the_soundtrack() {
+        // 25 MB for 2 minutes with sound: about 1.5 Mbit/s of picture
+        let kbps = video_kbps_for(25.0, 120.0, true);
+        let total_mb = (kbps + AUDIO_KBPS) * 120.0 / 8.0 / 1024.0;
+        assert!(total_mb < 25.0 && total_mb > 23.0, "{total_mb}");
+        assert!(video_kbps_for(25.0, 120.0, false) > kbps);
+        // A cap too small for the length still asks for a picture
+        assert_eq!(video_kbps_for(0.1, 600.0, true), 100.0);
+    }
 
     #[test]
     fn smoothing_adds_inbetweens_before_scaling() {

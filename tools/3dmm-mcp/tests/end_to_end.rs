@@ -318,8 +318,23 @@ async fn builds_saves_and_reopens_a_two_scene_movie() -> Result<()> {
             transition_seconds: 1.0,
             audio: true,
             smooth: true,
+            max_megabytes: None,
         };
         let summary = threedmm_mcp::video::render(&manifest, &mp4, &options).await?;
+        // A size cap is met
+        let capped = out.join("e2e-small.mp4");
+        let small = threedmm_mcp::video::VideoOptions {
+            scale: 1,
+            transition_seconds: 1.0,
+            audio: true,
+            smooth: false,
+            max_megabytes: Some(0.5),
+        };
+        let summary_small = threedmm_mcp::video::render(&manifest, &capped, &small).await?;
+        ensure!(
+            std::fs::metadata(&capped)?.len() <= 512 * 1024,
+            "under the cap: {summary_small}"
+        );
         println!("video: {summary}");
         ensure!(summary["sounds"].as_u64().unwrap() >= 2, "{summary}");
         ensure!(std::fs::metadata(&mp4)?.len() > 50_000, "video written");

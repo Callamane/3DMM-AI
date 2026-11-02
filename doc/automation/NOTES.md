@@ -612,6 +612,12 @@ on the way:
   MP4. "Make me a 30-second movie of two guys arguing in a diner" became
   one call: two scenes, 31.5 s, subtitles, music, a throw and an exit,
   built and exported in 7.4 s with no review warnings.
+* `export_video(max_megabytes)` encodes in two passes at the video bitrate
+  that fits the size with the 160 kbit/s soundtrack and 4% container
+  headroom. The renderer's 8-bit dithering compresses poorly (the 2-minute
+  test movie is 30.6 MB at CRF 18; CRF 23 only reaches 21 MB at SSIM
+  0.985); capped at 25 MB it came out at 24.6 MB with SSIM 0.988 against
+  the CRF 18 version, in 14 s. script_movie passes `export_max_megabytes`.
 * Scale test: a 10-scene, 2-minute movie (three characters, entrances,
   exits, a throw, subtitles, music, 44 sounds) built and exported from one
   script_movie call in about 27 s. It exposed two problems, both fixed:
