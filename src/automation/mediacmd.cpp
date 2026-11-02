@@ -30,6 +30,9 @@ static const NamedColor _rgnamedcolor[] = {
 
 // Maps a color to the nearest entry in the current 8-bit palette. Text in
 // 3DMM is palettized, so exact RGB isn't always available.
+// Above this average brightness, "auto" text colour picks dark text
+const double kdLumaBrightText = 0.55;
+
 static bool _FParseColor(Request &req, const Json &json, ACR *pacr)
 {
     int r = -1, g = -1, b = -1;
@@ -298,8 +301,21 @@ static bool _FCmdAddText(Request &req)
     {
         chp.grfont = (fBold ? fontBold : 0) | (fItalic ? fontItalic : 0) | (fUnderline ? fontUnderline : 0);
     }
-    if (req.FHasArg("color") && !_FParseColor(req, req.args.Get("color"), &chp.acrFore))
+    const Json &jsonColor = req.args.Get("color");
+    if (jsonColor.IsString() && StrLower(jsonColor.AsString()) == "auto")
+    {
+        // Readable over whatever is behind it: dark text on a bright area,
+        // the usual yellow on a dark one
+        double dLuma = 0;
+        bool fBright = FMeanLuminance(pmvie, rc, &dLuma) && dLuma > kdLumaBrightText;
+        if (!_FParseColor(req, Json(fBright ? "#202050" : "#ffff40"), &chp.acrFore))
+            return fFalse;
+        req.result.Set("color", fBright ? "dark (bright background)" : "yellow (dark background)");
+    }
+    else if (req.FHasArg("color") && !_FParseColor(req, jsonColor, &chp.acrFore))
+    {
         return fFalse;
+    }
     ACR acrBox = kacrClear;
     if (req.FHasArg("background") && !_FParseColor(req, req.args.Get("background"), &acrBox))
         return fFalse;

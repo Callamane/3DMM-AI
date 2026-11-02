@@ -360,10 +360,18 @@ static bool _FReviewScene(Request &req, PMVIE pmvie, int32_t iscen, std::vector<
             bool fListening = !fSpeaking && _FOtherSpeaking(vecTracks, track, range);
             // Passing behind something on the way in or out is staging, not a mistake
             bool fPassing = !fSpeaking && _FMoving(track, range);
-            add(fListening || fPassing ? "info" : "warning", "hidden", range, track.strName,
-                track.strName + " is mostly hidden behind " + track.mapHiddenBy.at(range.from) +
-                    (fSpeaking ? " while speaking"
-                               : (fListening ? " while someone else speaks" : (fPassing ? " while walking" : ""))),
+            // Someone walking across in front for a moment is staging too
+            const std::string &strBy = track.mapHiddenBy.at(range.from);
+            auto itBy = std::find_if(vecTracks.begin(), vecTracks.end(),
+                                     [&](const ActorTrack &other) { return other.strName == strBy; });
+            bool fCrossedBy = itBy != vecTracks.end() && _FMoving(*itBy, range) && range.to - range.from < kfps;
+            add(fListening || fPassing || fCrossedBy ? "info" : "warning", "hidden", range, track.strName,
+                track.strName + " is mostly hidden behind " + strBy +
+                    (fSpeaking    ? " while speaking"
+                     : fListening ? " while someone else speaks"
+                     : fPassing   ? " while walking"
+                     : fCrossedBy ? " as they walk past"
+                                  : ""),
                 "move them (arrange_actors does a group), spread the actors out sideways (x) or pick a camera "
                 "from another side");
         }

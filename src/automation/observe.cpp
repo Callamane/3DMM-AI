@@ -238,6 +238,33 @@ static bool _FCountActorPixels(PMVIE pmvie, PACTR pactr, RC *prcView, const RC &
     return fTrue;
 }
 
+bool FMeanLuminance(PMVIE pmvie, RC rc, double *pdLuma)
+{
+    PMVU pmvu = PmvuCur();
+    if (pmvu == pvNil || pmvie->Pscen() == pvNil)
+        return fFalse;
+    RC rcView, rcClip;
+    pmvu->GetRc(&rcView, cooLocal);
+    if (!rcClip.FIntersect(&rc, &rcView))
+        return fFalse;
+    UseScenePalette(pmvie);
+    Image8 img;
+    if (!_FRenderWorld(pmvie, &rcView, &img))
+        return fFalse;
+    std::vector<PngColor> palette = _PaletteCur();
+    double dSum = 0;
+    for (int32_t y = rcClip.ypTop; y < rcClip.ypBottom; y++)
+    {
+        for (int32_t x = rcClip.xpLeft; x < rcClip.xpRight; x++)
+        {
+            const PngColor &clr = palette[img.Get(x, y) % palette.size()];
+            dSum += (0.299 * clr.red + 0.587 * clr.green + 0.114 * clr.blue) / 255.0;
+        }
+    }
+    *pdLuma = dSum / LwMax(1, rcClip.Dxp() * rcClip.Dyp());
+    return fTrue;
+}
+
 bool FVisibleFraction(PMVIE pmvie, PACTR pactr, double *pdFraction)
 {
     PMVU pmvu = PmvuCur();

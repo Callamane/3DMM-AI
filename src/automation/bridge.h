@@ -155,6 +155,9 @@ bool FTurnToFace(Request &req, PMVIE pmvie, PACTR pactr, const Json &jsonFace, d
 // render against its pixels with nothing in front of it (observe.cpp). Low
 // values mean scenery or other actors hide it.
 bool FVisibleFraction(PMVIE pmvie, PACTR pactr, double *pdFraction);
+// Average brightness (0 black .. 1 white) of the 3D picture inside rc at
+// the current frame (observe.cpp)
+bool FMeanLuminance(PMVIE pmvie, RC rc, double *pdLuma);
 // Keeps an actor in place doing anid for cfrm frames from the current frame
 // (recording replaces what it did afterwards), extending the scene
 bool FHoldInPlace(Request &req, PACTR pactr, int32_t anid, int32_t cfrm);
