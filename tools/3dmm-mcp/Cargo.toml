@@ -1,0 +1,24 @@
+[package]
+name = "threedmm-mcp"
+version = "0.1.0"
+edition = "2021"
+description = "MCP server that drives Microsoft 3D Movie Maker (3DMMEx) through its automation bridge"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "3dmm-mcp"
+path = "src/main.rs"
+
+[dependencies]
+rmcp = { version = "3.8", features = ["server", "transport-io", "macros"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "net", "io-util", "time", "process", "sync", "fs"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+anyhow = "1"
+base64 = "0.22"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Standalone crate: stop cargo from looking for a parent workspace
+[workspace]
