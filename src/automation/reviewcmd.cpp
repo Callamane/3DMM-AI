@@ -192,9 +192,11 @@ static bool _FReviewScene(Request &req, PMVIE pmvie, int32_t iscen, std::vector<
             {
                 fActive = true; // acting (talking, dancing...) on the spot
             }
+            // Only speech makes someone a speaker (a hit sound on them doesn't)
+            if (pactr->FSoundInFrm(stySpeech))
+                track.vecSpeechStarts.push_back(nfrm);
             if (pactr->FSoundInFrm())
             {
-                track.vecSpeechStarts.push_back(nfrm);
                 setSample.insert(nfrm);
                 fActive = true;
             }

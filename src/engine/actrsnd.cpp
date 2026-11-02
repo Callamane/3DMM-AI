@@ -689,10 +689,11 @@ bool ACTR::FDeleteSndCore(int32_t sty, bool fMotionMatch)
         Enumerates all actor events for current frame looking for a sound
         event.
 
-    Returns: fTrue if a sound event was found, fFalse otherwise
+    Returns: fTrue if a sound event was found, fFalse otherwise. A sty
+    other than styNil only counts sounds of that type.
 
 ************************************************************ PETED ***********/
-bool ACTR::FSoundInFrm(void)
+bool ACTR::FSoundInFrm(int32_t sty)
 {
     AssertThis(0);
     AssertPo(Pscen(), 0);
@@ -706,7 +707,7 @@ bool ACTR::FSoundInFrm(void)
         AEV aev;
 
         _pggaev->GetFixed(iaev, &aev);
-        if (aev.aet == aetSnd)
+        if (aev.aet == aetSnd && (sty == styNil || ((AEVSND *)_pggaev->QvGet(iaev))->sty == sty))
             return fTrue;
     }
     return fFalse;

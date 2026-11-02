@@ -38,12 +38,13 @@ struct ShotStyle
     double dSpeakerCutShare;   // a cut where the speaker changes costs this share of a cut
     double dHoldSeconds;       // a shot held longer starts to cost...
     double dHoldPenaltyPerSec; // ...this much per second
+    double dComparableSingle;  // a clean single may trail the best angle this much and still be cut to
 };
 const ShotStyle krgstyle[] = {
     // establish wide, then singles on whoever speaks (shot / reverse shot)
-    {"coverage", 2.5, 0.2, 0.4, 0.8, 1.0, 1.5, 0.6, -1.0, 0.25, 6, 0.3},
+    {"coverage", 2.5, 0.2, 0.4, 0.8, 1.0, 1.5, 0.6, -1.0, 0.25, 6, 0.3, 1.75},
     // keep everyone in frame, few cuts
-    {"wide", 1.2, 1.0, 1.2, 0.5, 0.3, 0.8, 0.3, 0, 0.5, 12, 0.12},
+    {"wide", 1.2, 1.0, 1.2, 0.5, 0.3, 0.8, 0.3, 0, 0.5, 12, 0.12, 0},
 };
 const double kdMinShotSecondsDefault = 2;
 const double kdVisibleMinShot = 0.5; // less of the speaker showing is not a shot of them
@@ -52,8 +53,11 @@ const double kdFacingSide = 110;     // profile
 const double kdScoreMissing = -3;
 const double kdFaceReadableShare = 1.5; // facing credit scales with framing up to this (2/3 framing = full)
 const double kdComparableShot = 0.75;   // pacing only cuts between angles this close to the best
+const double kdHeightSingle = 0.35;     // a clean single: the speaker at least this share of the frame height,
+const double kdVisibleSingle = 0.8;     // this much of them showing, facing us and nobody against the lens
 const double kdLensShare = 0.45;        // another actor covering this much of the frame blocks the shot
 const double kdScoreLensBlocked = -2.5; // speaker not in shot
+const double kdScoreCrossLine = -2;     // filmed from across the speaker's line with their partner
 const double kdScoreOtherSide = -10;    // a beat pinned to one camera, from another
 
 struct Beat
@@ -64,10 +68,41 @@ struct Beat
     int32_t icamPinned = -1; // shown only from this camera (an entrance or exit keeps its screen direction)
 };
 
+static Vec3 _PosWorld(PACTR pactr)
+{
+    BRS xr, yr, zr;
+    pactr->Pbody()->GetPosition(&xr, &yr, &zr);
+    return Vec3(DFromBrs(xr), DFromBrs(yr), DFromBrs(zr));
+}
+
+// The line of action at the current frame: the speaker and whoever stands
+// nearest them (props don't count). False when there's no pair.
+static bool _FLineOfAction(const std::vector<PACTR> &vecActors, int32_t iSpeaker, Vec3 *pposSpeaker, Vec3 *pposPartner)
+{
+    if (iSpeaker < 0 || !vecActors[iSpeaker]->FOnStage())
+        return false;
+    *pposSpeaker = _PosWorld(vecActors[iSpeaker]);
+    double dNearest = -1;
+    for (size_t i = 0; i < vecActors.size(); i++)
+    {
+        if (static_cast<int32_t>(i) == iSpeaker || !vecActors[i]->FOnStage() || vecActors[i]->FIsPropBrws())
+            continue;
+        Vec3 pos = _PosWorld(vecActors[i]);
+        double d = (pos - *pposSpeaker).Length();
+        if (dNearest < 0 || d < dNearest)
+        {
+            dNearest = d;
+            *pposPartner = pos;
+        }
+    }
+    return dNearest >= 0;
+}
+
 // Scores the current camera for a beat at the current frame
 static double _DScoreShot(PMVIE pmvie, const std::vector<PACTR> &vecActors, int32_t iSpeaker, RC rcView,
-                          const ShotStyle &style, bool *pfFaceAway)
+                          const ShotStyle &style, bool *pfFaceAway, bool *pfSingle)
 {
+    *pfSingle = false;
     CameraModel camera;
     if (!FGetCamera(pmvie, &camera))
         return kdScoreMissing;
@@ -107,7 +142,9 @@ static double _DScoreShot(PMVIE pmvie, const std::vector<PACTR> &vecActors, int3
                                                       : (degFacing <= kdFacingSide ? style.dFaceSide : style.dFaceBack);
             // 0 in the middle of the frame, 1 at either edge
             double dOffCentre = std::fabs((rc.xpLeft + rc.xpRight) / 2.0 - rcView.Dxp() / 2.0) / (rcView.Dxp() / 2.0);
-            double dFraming = DFramingScore(static_cast<double>(rc.Dyp()) / rcView.Dyp(), style.dIdealHeight);
+            double dHeightShare = static_cast<double>(rc.Dyp()) / rcView.Dyp();
+            double dFraming = DFramingScore(dHeightShare, style.dIdealHeight);
+            *pfSingle = dHeightShare >= kdHeightSingle && degFacing <= kdFacingFront && dVisible >= kdVisibleSingle;
             // A face too small to read earns little for facing us
             if (dFace > 0)
                 dFace *= std::min(1.0, dFraming * kdFaceReadableShare);
@@ -131,6 +168,8 @@ static double _DScoreShot(PMVIE pmvie, const std::vector<PACTR> &vecActors, int3
     {
         // Listeners in the shot help (the audience sees who is talked to)
         int32_t cListeners = cOn - 1;
+        if (dBlocking < 0)
+            *pfSingle = false;
         return dScoreSpeaker + dBlocking + (cListeners > 0 ? style.dListenerWeight * cInShot / cListeners : 0);
     }
     // Establishing: everyone in, at a readable size
@@ -270,7 +309,7 @@ static bool _FCmdAutoCamera(Request &req)
             return FFailEngine(req, "could not go to frame " + std::to_string(nfrm));
         for (size_t i = 0; i < vecActors.size(); i++)
         {
-            if (vecActors[i]->FOnStage() && vecActors[i]->FSoundInFrm())
+            if (vecActors[i]->FOnStage() && vecActors[i]->FSoundInFrm(stySpeech))
             {
                 if (!vecBeats.empty() && vecBeats.back().nfrmStart == nfrm)
                     continue; // two sounds at once: the first actor leads
@@ -293,8 +332,14 @@ static bool _FCmdAutoCamera(Request &req)
     if (!pscen->FGotoFrm(nfrmFirst))
         return FFailEngine(req, "could not go to the first frame");
     int32_t icamOpening = pbkgd->Icam();
+    // The opening camera sets which side of each pair the audience watches
+    // from (the 180-degree rule)
+    CameraModel cameraOpening;
+    bool fOpeningKnown = FGetCamera(pmvie, &cameraOpening);
     std::vector<std::vector<double>> vecvecScore(vecBeats.size(), std::vector<double>(vecCams.size(), 1e9));
     std::vector<std::vector<bool>> vecvecFaceAway(vecBeats.size(), std::vector<bool>(vecCams.size(), false));
+    std::vector<std::vector<bool>> vecvecSingle(vecBeats.size(), std::vector<bool>(vecCams.size(), true));
+    std::vector<std::vector<bool>> vecvecCrosses(vecBeats.size(), std::vector<bool>(vecCams.size(), false));
     for (size_t ibeat = 0; ibeat < vecBeats.size(); ibeat++)
     {
         int32_t nfrmLim = ibeat + 1 < vecBeats.size() ? vecBeats[ibeat + 1].nfrmStart : nfrmLast + 1;
@@ -304,12 +349,25 @@ static bool _FCmdAutoCamera(Request &req)
         {
             if (!pscen->FGotoFrm(nfrm))
                 return FFailEngine(req, "could not go to frame " + std::to_string(nfrm));
+            Vec3 posSpeaker, posPartner;
+            bool fLine = fOpeningKnown && _FLineOfAction(vecActors, vecBeats[ibeat].itrack, &posSpeaker, &posPartner);
             for (size_t icam = 0; icam < vecCams.size(); icam++)
             {
                 if (!pbkgd->FSetCamera(pmvie->Pbwld(), vecCams[icam]))
                     return FFailEngine(req, "could not try camera " + std::to_string(vecCams[icam]));
-                bool fFaceAway = false;
-                double d = _DScoreShot(pmvie, vecActors, vecBeats[ibeat].itrack, rcView, *pstyle, &fFaceAway);
+                bool fFaceAway = false, fSingle = false;
+                double d = _DScoreShot(pmvie, vecActors, vecBeats[ibeat].itrack, rcView, *pstyle, &fFaceAway, &fSingle);
+                CameraModel camera;
+                if (fLine && FGetCamera(pmvie, &camera) &&
+                    !FSameSideOfLine(posSpeaker.x, posSpeaker.z, posPartner.x, posPartner.z, cameraOpening.position.x,
+                                     cameraOpening.position.z, camera.position.x, camera.position.z))
+                {
+                    d += kdScoreCrossLine;
+                    fSingle = false;
+                    vecvecCrosses[ibeat][icam] = true;
+                }
+                if (!fSingle)
+                    vecvecSingle[ibeat][icam] = false;
                 if (fFaceAway && vecBeats[ibeat].fSpeaks)
                     vecvecFaceAway[ibeat][icam] = true;
                 vecvecScore[ibeat][icam] = std::fmin(vecvecScore[ibeat][icam], d);
@@ -339,10 +397,14 @@ static bool _FCmdAutoCamera(Request &req)
         vecStarts.push_back(vecBeats[ibeat].nfrmStart);
         vecSpeakerChange.push_back(ibeat > 0 && vecBeats[ibeat].itrack != vecBeats[ibeat - 1].itrack);
     }
-    ShotPacing pacing{dCutPenalty, pstyle->dSpeakerCutShare, static_cast<int32_t>(pstyle->dHoldSeconds * kfps),
-                      pstyle->dHoldPenaltyPerSec / kfps, kdComparableShot};
+    ShotPacing pacing{dCutPenalty,
+                      pstyle->dSpeakerCutShare,
+                      static_cast<int32_t>(pstyle->dHoldSeconds * kfps),
+                      pstyle->dHoldPenaltyPerSec / kfps,
+                      kdComparableShot,
+                      pstyle->dComparableSingle};
     std::vector<int32_t> vecChoice =
-        VecChooseShotsPaced(vecvecScore, vecStarts, nfrmLast + 1, vecSpeakerChange, pacing);
+        VecChooseShotsPaced(vecvecScore, vecStarts, nfrmLast + 1, vecSpeakerChange, pacing, &vecvecSingle);
     std::vector<int32_t> vecBeatStart;
     for (const Beat &beat : vecBeats)
         vecBeatStart.push_back(beat.nfrmStart);
@@ -388,6 +450,13 @@ static bool _FCmdAutoCamera(Request &req)
                                          : "actor " + std::to_string(vecActors[itrack]->Arid())));
         if (vecvecScore[ibeat][vecChoice[ibeat]] < 0)
             json.Set("warning", "no camera shows this speaker well; move them (arrange_actors) or accept it");
+        else if (std::any_of(vecvecCrosses.begin() + ibeat, vecvecCrosses.begin() + ibeat + (ibeatLim - ibeat),
+                             [&](const std::vector<bool> &vec) { return static_cast<bool>(vec[vecChoice[ibeat]]); }))
+        {
+            json.Set("warning", "this angle is across the line from the opening shot, so the pair swap sides on "
+                                "screen; no camera on the opening side shows the speaker uncut. Re-block them "
+                                "(arrange_actors, another spot or spacing) or accept it");
+        }
         else if (std::any_of(vecvecFaceAway.begin() + ibeat, vecvecFaceAway.begin() + ibeatLim,
                              [&](const std::vector<bool> &vec) { return static_cast<bool>(vec[vecChoice[ibeat]]); }))
         {
@@ -415,6 +484,13 @@ static bool _FCmdAutoCamera(Request &req)
             for (size_t icam = 0; icam < vecCams.size(); icam++)
                 jsonScores.Set(std::to_string(vecCams[icam]), std::round(vecvecScore[ibeat][icam] * 100) / 100);
             json.Set("scores", jsonScores);
+            Json jsonCrosses = Json::MakeArray();
+            for (size_t icam = 0; icam < vecCams.size(); icam++)
+            {
+                if (vecvecCrosses[ibeat][icam])
+                    jsonCrosses.Push(Json(static_cast<double>(vecCams[icam])));
+            }
+            json.Set("crosses_line", jsonCrosses);
             jsonBeats.Push(json);
         }
         req.result.Set("beat_scores", jsonBeats);

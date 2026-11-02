@@ -687,7 +687,7 @@ class ACTR : public ACTR_PAR
     bool FSetVlmSnd(int32_t sty, bool fMotionMatch, int32_t vlm); // Set the volume of a sound
     bool FQuerySnd(int32_t sty, bool fMotionMatch, PGL *pglTagSnd, int32_t *pvlm, bool *pfLoop);
     bool FDeleteSndCore(int32_t sty, bool fMotionMatch);
-    bool FSoundInFrm(void);
+    bool FSoundInFrm(int32_t sty = styNil); // styNil: a sound of any type
     bool FResolveAllSndTags(CNO cnoScen);
 
     // Route Definition

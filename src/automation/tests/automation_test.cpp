@@ -540,6 +540,19 @@ TEST(AutomationDirecting, FramingPrefersHalfTheFrame)
     EXPECT_LT(DFramingScore(1.3, 0.8), DFramingScore(0.5, 0.8));
 }
 
+TEST(AutomationDirecting, CamerasStayOnOneSideOfTheLine)
+{
+    // A at (0, 0) and B at (2, 0); the opening camera films them from z < 0
+    EXPECT_TRUE(FSameSideOfLine(0, 0, 2, 0, 1, -5, 3, -1));
+    EXPECT_FALSE(FSameSideOfLine(0, 0, 2, 0, 1, -5, 1, 5)) << "the reverse side swaps who is on the left";
+    EXPECT_FALSE(FSameSideOfLine(2, 0, 0, 0, 1, -5, -1, 3)) << "whichever of the pair speaks";
+    // A camera (nearly) along the line, or an opening camera on it, crosses nothing
+    EXPECT_TRUE(FSameSideOfLine(0, 0, 2, 0, 1, -5, 6, 0.2));
+    EXPECT_TRUE(FSameSideOfLine(0, 0, 2, 0, -6, 0.1, 1, 5));
+    // People standing on one spot have no line
+    EXPECT_TRUE(FSameSideOfLine(0, 0, 0, 0, 1, -5, 1, 5));
+}
+
 TEST(AutomationDirecting, PacedEditingCutsOnDialogueAndAvoidsLongHolds)
 {
     // Two speakers alternating; the wide shot (0) is slightly better for both
@@ -566,4 +579,22 @@ TEST(AutomationDirecting, PacedEditingCutsOnDialogueAndAvoidsLongHolds)
     auto worse = VecChooseShotsPaced({{6.1, 5.3}, {7.0, 3.9}, {6.1, 5.3}, {7.0, 3.9}}, {1, 30, 60, 90}, 120,
                                      {false, true, true, true}, pacing);
     EXPECT_EQ(worse, (std::vector<int32_t>{0, 0, 0, 0}));
+    // ...unless it is a clean single (the speaker's face large and turned to
+    // us), which may trail the two-shot further: then a long exchange cuts
+    std::vector<std::vector<double>> twoShot{{7.3, 6.5, 4}, {7.4, 4, 5.7}, {7.3, 6.5, 4}, {7.4, 4, 5.7}};
+    std::vector<std::vector<bool>> readable{
+        {false, true, false}, {false, false, true}, {false, true, false}, {false, false, true}};
+    ShotPacing pacingSingles{0.4, 0.25, 36, 0.05, 0.75, 1.75};
+    auto held = VecChooseShotsPaced(twoShot, starts, 120, speakerChange, pacingSingles);
+    EXPECT_EQ(held, (std::vector<int32_t>{0, 0, 0, 0})) << "without knowing which shots are singles";
+    auto cut = VecChooseShotsPaced(twoShot, starts, 120, speakerChange, pacingSingles, &readable);
+    ccut = 0;
+    for (size_t i = 1; i < cut.size(); i++)
+        ccut += cut[i] != cut[i - 1];
+    EXPECT_GE(ccut, 1) << "a 20 s exchange with clean singles available";
+    // A bad shot stays out even if marked readable
+    std::vector<std::vector<bool>> readableBad{{false, true}, {false, true}, {false, true}};
+    auto stillNoBad = VecChooseShotsPaced({{7, 4}, {7, 4}, {7, 4}}, {1, 40, 80}, 120, {false, false, false},
+                                          pacingSingles, &readableBad);
+    EXPECT_EQ(stillNoBad, (std::vector<int32_t>{0, 0, 0}));
 }

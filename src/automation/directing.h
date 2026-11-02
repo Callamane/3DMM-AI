@@ -37,10 +37,15 @@ struct ShotPacing
     // Angles scoring more than this below a beat's best are left out for that
     // beat: variety never justifies cutting to a clearly worse shot
     double dComparable;
+    // A clean single (vecvecReadable: the speaker's face large and turned to
+    // us) may trail the best by this much instead; it scores below a
+    // two-shot that shows everyone but is still a shot an editor cuts to
+    double dComparableReadable = 0;
 };
 std::vector<int32_t> VecChooseShotsPaced(const std::vector<std::vector<double>> &vecvecScore,
                                          const std::vector<int32_t> &vecBeatStart, int32_t nfrmEnd,
-                                         const std::vector<bool> &vecSpeakerChange, const ShotPacing &pacing);
+                                         const std::vector<bool> &vecSpeakerChange, const ShotPacing &pacing,
+                                         const std::vector<std::vector<bool>> *pvecvecReadable = nullptr);
 
 // Beats start at vecBeatStart (ascending frames) and the last ends before
 // nfrmEnd. A shot (a run of beats on one camera) shorter than cfrmMin
@@ -50,6 +55,13 @@ std::vector<int32_t> VecChooseShotsPaced(const std::vector<std::vector<double>> 
 // over the short shot instead.
 void HoldShortShots(const std::vector<int32_t> &vecBeatStart, int32_t nfrmEnd, int32_t cfrmMin,
                     std::vector<int32_t> *pvecCamera, const std::vector<std::vector<double>> *pvecvecScore = nullptr);
+
+// The 180-degree rule: whether a camera at (xCam, zCam) films the pair A-B
+// from the same side of the line through them as the reference camera at
+// (xRef, zRef), so the two keep their places on screen (floor coordinates).
+// A camera or reference (nearly) along the line is on both sides.
+bool FSameSideOfLine(double xA, double zA, double xB, double zB, double xRef, double zRef, double xCam,
+                     double zCam);
 
 // How well a subject's on-screen height (share of the view height, which
 // can pass 1 when the legs are cropped) suits a shot: 1 at dIdeal, falling

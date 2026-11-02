@@ -50,7 +50,8 @@ std::vector<int32_t> VecChooseShots(const std::vector<std::vector<double>> &vecv
 
 std::vector<int32_t> VecChooseShotsPaced(const std::vector<std::vector<double>> &vecvecScore,
                                          const std::vector<int32_t> &vecBeatStart, int32_t nfrmEnd,
-                                         const std::vector<bool> &vecSpeakerChange, const ShotPacing &pacing)
+                                         const std::vector<bool> &vecSpeakerChange, const ShotPacing &pacing,
+                                         const std::vector<std::vector<bool>> *pvecvecReadable)
 {
     size_t cbeat = vecvecScore.size();
     if (cbeat == 0 || vecvecScore[0].empty() || vecBeatStart.size() < cbeat)
@@ -62,13 +63,17 @@ std::vector<int32_t> VecChooseShotsPaced(const std::vector<std::vector<double>> 
     // shot started so a held shot can pay for its length (exact for the
     // best path into each state, which is what matters here)
     std::vector<std::vector<double>> vecvecUsable = vecvecScore;
-    for (std::vector<double> &vecScores : vecvecUsable)
+    for (size_t ibeat = 0; ibeat < cbeat; ibeat++)
     {
+        std::vector<double> &vecScores = vecvecUsable[ibeat];
         double dBestHere = *std::max_element(vecScores.begin(), vecScores.end());
-        for (double &d : vecScores)
+        for (size_t icam = 0; icam < ccam; icam++)
         {
-            if (d < dBestHere - pacing.dComparable)
-                d = -1e9;
+            bool fReadable = pvecvecReadable != nullptr && ibeat < pvecvecReadable->size() &&
+                             icam < (*pvecvecReadable)[ibeat].size() && (*pvecvecReadable)[ibeat][icam];
+            double dMargin = fReadable ? std::max(pacing.dComparable, pacing.dComparableReadable) : pacing.dComparable;
+            if (vecScores[icam] < dBestHere - dMargin)
+                vecScores[icam] = -1e9;
         }
     }
     std::vector<std::vector<double>> vecvecBest(cbeat, std::vector<double>(ccam));
@@ -161,6 +166,28 @@ void HoldShortShots(const std::vector<int32_t> &vecBeatStart, int32_t nfrmEnd, i
         for (size_t ibeat = ibeatShort; ibeat < ibeatShortLim; ibeat++)
             vecCamera[ibeat] = icam;
     }
+}
+
+// Sine of the angle from the line under which a camera counts as on it
+const double kdOnTheLine = 0.2;
+
+bool FSameSideOfLine(double xA, double zA, double xB, double zB, double xRef, double zRef, double xCam, double zCam)
+{
+    double dxLine = xB - xA, dzLine = zB - zA;
+    double dLine = std::hypot(dxLine, dzLine);
+    if (dLine < 1e-6)
+        return true;
+    // Signed sine of the angle between the line and the way to a camera,
+    // seen from the middle of the pair
+    double xMid = (xA + xB) / 2, zMid = (zA + zB) / 2;
+    auto side = [&](double x, double z) {
+        double d = std::hypot(x - xMid, z - zMid);
+        return d < 1e-6 ? 0.0 : (dxLine * (z - zMid) - dzLine * (x - xMid)) / (dLine * d);
+    };
+    double dRef = side(xRef, zRef), dCam = side(xCam, zCam);
+    if (std::fabs(dRef) < kdOnTheLine || std::fabs(dCam) < kdOnTheLine)
+        return true;
+    return (dRef > 0) == (dCam > 0);
 }
 
 // Past the ideal size the score falls this fast (per ideal-height of excess):
