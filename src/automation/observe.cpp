@@ -758,7 +758,7 @@ static Json _JsonVisibleFloor(const StageFrame &stage, const CameraModel &camera
     return json;
 }
 
-static std::string _StrTboxText(PTBOX ptbox)
+std::string StrTboxText(PTBOX ptbox)
 {
     int32_t cpMac = ptbox->CpMac();
     std::string str;
@@ -845,7 +845,7 @@ static bool _FCmdDescribeScene(Request &req)
         int32_t nfrmFirst, nfrmLast;
         json.Set("index", itbox);
         json.Set("kind", ptbox->FStory() ? "caption" : "scrolling");
-        json.Set("text", _StrTboxText(ptbox));
+        json.Set("text", StrTboxText(ptbox));
         json.Set("visible_now", ptbox->FIsVisible());
         if (ptbox->FGetLifetime(&nfrmFirst, &nfrmLast))
         {
@@ -1076,7 +1076,7 @@ static bool _FCmdDescribeTimeline(Request &req)
         Json json = Json::MakeObject();
         json.Set("index", itbox);
         PTBOX ptbox = pscen->PtboxFromItbox(itbox);
-        json.Set("text", ptbox != pvNil ? _StrTboxText(ptbox).substr(0, 80) : "");
+        json.Set("text", ptbox != pvNil ? StrTboxText(ptbox).substr(0, 80) : "");
         json.Set("visible", jsonRanges);
         jsonText.Push(json);
     }

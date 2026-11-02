@@ -92,6 +92,7 @@ extern const CommandInfo krgcmdActor[];
 extern const CommandInfo krgcmdMedia[];
 extern const CommandInfo krgcmdObserve[];
 extern const CommandInfo krgcmdExport[];
+extern const CommandInfo krgcmdReview[];
 
 /***************************************************************************
     BRender number conversions. This build of BRender is fixed point
@@ -156,6 +157,9 @@ bool FApplyFrameArg(Request &req, PSCEN pscen);
 std::string StrDrainEngineErrors(void);
 // Fails req with kszErrEngine, appending any engine error codes
 bool FFailEngine(Request &req, const std::string &strWhat);
+
+// The text of a text box (\r line breaks become \n; long text is cut short)
+std::string StrTboxText(PTBOX ptbox);
 
 void RefreshViews(PMVIE pmvie);
 // Renders the 3D world for the current frame so actor screen bounds are current

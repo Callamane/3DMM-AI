@@ -10,6 +10,7 @@
 #include "image8.h"
 #include "json.h"
 #include "pngwrite.h"
+#include "review.h"
 #include "stage.h"
 
 using namespace automation;
@@ -256,4 +257,43 @@ TEST(AutomationImage, StageGridProjectsIntoView)
     for (int32_t dx = -1; dx <= 1; dx++)
         fNear |= img.Get(static_cast<int32_t>(xp) + dx, static_cast<int32_t>(yp)) == 2;
     EXPECT_TRUE(fNear);
+}
+
+TEST(AutomationReview, CoveredFraction)
+{
+    ScreenBox back{0, 0, 100, 100};
+    EXPECT_DOUBLE_EQ(DCoveredFraction(back, {50, 0, 150, 100}), 0.5);
+    EXPECT_DOUBLE_EQ(DCoveredFraction(back, {-10, -10, 200, 200}), 1.0);
+    EXPECT_DOUBLE_EQ(DCoveredFraction(back, {100, 0, 200, 100}), 0.0); // touching edges
+    EXPECT_DOUBLE_EQ(DCoveredFraction({5, 5, 5, 9}, back), 0.0);       // empty box
+}
+
+TEST(AutomationReview, CutOffAtSides)
+{
+    EXPECT_FALSE(FCutOffAtSides({10, 10, 100, 100}, 544));
+    EXPECT_TRUE(FCutOffAtSides({0, 10, 100, 100}, 544));   // touches the left edge
+    EXPECT_TRUE(FCutOffAtSides({10, -5, 100, 100}, 544));  // head out of frame
+    EXPECT_TRUE(FCutOffAtSides({500, 10, 544, 100}, 544)); // right edge
+    EXPECT_FALSE(FCutOffAtSides({10, 10, 100, 400}, 544)); // legs cropped is fine
+}
+
+TEST(AutomationReview, ReadingTime)
+{
+    EXPECT_DOUBLE_EQ(DSecondsToRead(""), 2.0);
+    EXPECT_DOUBLE_EQ(DSecondsToRead("THE END"), 2.0);
+    EXPECT_DOUBLE_EQ(DSecondsToRead("one two three four five six seven eight nine"), 4.0);
+    EXPECT_DOUBLE_EQ(DSecondsToRead("  spaced\n out\twords  here  and  there "), 3.0);
+}
+
+TEST(AutomationReview, GroupsFramesIntoRanges)
+{
+    auto vec = VecRanges({1, 4, 7, 20, 23, 40}, 3);
+    ASSERT_EQ(vec.size(), 3u);
+    EXPECT_EQ(vec[0].from, 1);
+    EXPECT_EQ(vec[0].to, 7);
+    EXPECT_EQ(vec[1].from, 20);
+    EXPECT_EQ(vec[1].to, 23);
+    EXPECT_EQ(vec[2].from, 40);
+    EXPECT_EQ(vec[2].to, 40);
+    EXPECT_TRUE(VecRanges({}, 3).empty());
 }

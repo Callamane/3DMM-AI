@@ -470,6 +470,18 @@ on the way:
   `BODY` screen bounds are current, and ranks cameras by actors fully in
   shot, then by on-screen size near half the frame height, then centring.
   It can't detect occlusion by set pieces.
+* `review_movie` (reviewcmd.cpp; rules in review.cpp, unit tested) steps
+  every frame of each scene without rendering to track movement, action
+  changes, sound starts, cuts and text visibility, then renders every third
+  frame plus each cut and sound start to read `BODY` screen bounds. Out of
+  shot = not `FIsInView` or bounds wholly off screen; cut off = bounds touch
+  the left, right or top edge (the bottom is allowed: close shots crop
+  legs); hidden = 60% of the bounds covered by a nearer actor's bounds
+  (distance to the camera). Bounding boxes are coarse and set pieces are
+  invisible to it, like `suggest_camera`. A sound start marks the actor as
+  speaking for the next two seconds, which raises out-of-shot and cut-off
+  findings to warnings. Static stretches ignore actors held in a "rest"
+  action. The whole diner movie reviews in about 20 ms.
 * Request timeouts (`play` with `wait`, `goto_studio`) use
   `std::chrono::steady_clock` instead of the app's scalable `TsCurrent()`
   clock, after one release run reported a 60 s playback timeout 14 s in.

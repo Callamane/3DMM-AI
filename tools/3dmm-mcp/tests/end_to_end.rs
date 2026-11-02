@@ -269,6 +269,13 @@ async fn builds_saves_and_reopens_a_two_scene_movie() -> Result<()> {
     )
     .await?;
 
+    // ---- Review: every scene checked, issues carry frames and a fix
+    let review = s.call("review_movie", json!({})).await?;
+    ensure!(review["summary"]["scenes"] == 3, "{review}");
+    for issue in review["issues"].as_array().context("issues")? {
+        ensure!(issue["message"].is_string() && issue["fix"].is_string(), "{issue}");
+    }
+
     // ---- Video: frames and audio cues, then ffmpeg (skipped without ffmpeg)
     let media_dir = out.join("media");
     std::fs::create_dir_all(&media_dir)?;

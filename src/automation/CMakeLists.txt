@@ -9,6 +9,7 @@ add_library(automation-core STATIC
     "${CMAKE_CURRENT_SOURCE_DIR}/json.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/linesrv.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/pngwrite.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/review.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/stage.cpp"
 )
 target_include_directories(automation-core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -25,6 +26,7 @@ target_sources(studio
     "${CMAKE_CURRENT_SOURCE_DIR}/exportcmd.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/mediacmd.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/observe.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/reviewcmd.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/scenecmd.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/session.cpp"
 )
