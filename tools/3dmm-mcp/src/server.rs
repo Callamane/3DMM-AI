@@ -355,6 +355,96 @@ impl ThreeDmmServer {
     ) -> anyhow::Result<Vec<ContentBlock>> {
         let mut script = script::parse(&args).map_err(anyhow::Error::msg)?;
         script::assign_voices(&mut script.cast, &speech::installed_voices().await);
+        let result = self.build_scene(&script, true, timeout).await?;
+        Ok(vec![ContentBlock::text(result.to_string())])
+    }
+
+    /// Builds a whole movie from scripted scenes: every scene is checked
+    /// before any is built, characters keep one actor and voice throughout,
+    /// and the movie can be exported at the end.
+    async fn script_movie(
+        &self,
+        args: Value,
+        timeout: Duration,
+    ) -> anyhow::Result<Vec<ContentBlock>> {
+        let mut scripts = script::parse_movie(&args).map_err(anyhow::Error::msg)?;
+        script::assign_movie_voices(&mut scripts, &speech::installed_voices().await);
+        let state = self.bridge_call("get_state", json!({}), timeout).await?;
+        let mut notes: Vec<String> = Vec::new();
+        if state["movie"]["scene_count"].as_i64().unwrap_or(0) > 0 {
+            self.bridge_call(
+                "checkpoint",
+                json!({"name": "before script_movie"}),
+                timeout,
+            )
+            .await?;
+            notes.push(
+                "restore_checkpoint(\"before script_movie\") goes back to the movie as it was"
+                    .into(),
+            );
+        }
+        let mut scenes = Vec::new();
+        let mut warnings = 0;
+        let mut seconds = 0.0;
+        for (i, script) in scripts.iter().enumerate() {
+            let built = self
+                .build_scene(script, false, timeout)
+                .await
+                .map_err(|err| {
+                    anyhow::anyhow!(
+                        "scenes[{i}]: {} (scenes before it were built)",
+                        describe_error(&err)
+                    )
+                })?;
+            warnings += built["review"]["issues"]
+                .as_array()
+                .map(|issues| issues.iter().filter(|i| i["severity"] == "warning").count())
+                .unwrap_or(0);
+            seconds += built["seconds"].as_f64().unwrap_or(0.0);
+            scenes.push(built);
+        }
+        let mut result = json!({
+            "scenes": scenes,
+            "seconds": (seconds * 10.0).round() / 10.0,
+            "warnings": warnings,
+            "notes": notes,
+        });
+        if let Some(target) = args.get("target_seconds").and_then(Value::as_f64) {
+            if (seconds - target).abs() > target * 0.2 {
+                result["length_note"] = json!(format!(
+                    "the movie runs {seconds:.1} s against a target of {target} s; add or cut lines (waits, actions) to fit"
+                ));
+            }
+        }
+        if let Some(path) = args.get("export").and_then(Value::as_str) {
+            let exported = self
+                .export_video(json!({"path": path}), timeout)
+                .await
+                .map_err(|err| {
+                    anyhow::anyhow!(
+                        "export: {} (the movie itself was built)",
+                        describe_error(&err)
+                    )
+                })?;
+            if let Some(text) = exported
+                .first()
+                .and_then(|c| c.as_text())
+                .map(|t| t.text.clone())
+            {
+                result["export"] = serde_json::from_str(&text).unwrap_or(Value::String(text));
+            }
+        }
+        Ok(vec![ContentBlock::text(result.to_string())])
+    }
+
+    /// Builds one scene; with `checkpoint`, saves one first if the movie
+    /// already has scenes. Returns the scene's report.
+    async fn build_scene(
+        &self,
+        script: &script::Script,
+        checkpoint: bool,
+        timeout: Duration,
+    ) -> anyhow::Result<Value> {
         // Each step's failure names the step, so the caller knows what exists
         let step = |what: String| {
             move |err: anyhow::Error| anyhow::anyhow!("{what}: {}", describe_error(&err))
@@ -362,7 +452,7 @@ impl ThreeDmmServer {
 
         let state = self.bridge_call("get_state", json!({}), timeout).await?;
         let mut notes: Vec<String> = Vec::new();
-        if state["movie"]["scene_count"].as_i64().unwrap_or(0) > 0 {
+        if checkpoint && state["movie"]["scene_count"].as_i64().unwrap_or(0) > 0 {
             self.bridge_call(
                 "checkpoint",
                 json!({"name": "before script_scene"}),
@@ -525,7 +615,7 @@ impl ThreeDmmServer {
                         end = end.max(frame + (script::title_seconds(text) * 6.0).ceil() as i64);
                         self.bridge_call(
                             "add_text",
-                            json!({"text": text, "kind": "caption", "rect": "bottom", "frame": frame, "until_frame": end}),
+                            json!({"text": text, "kind": "caption", "rect": "bottom", "frame": frame, "until_frame": end, "color": "auto"}),
                             timeout,
                         )
                         .await
@@ -771,7 +861,7 @@ impl ThreeDmmServer {
             let until = 1 + (script::title_seconds(title) * 6.0).ceil() as i64;
             self.bridge_call(
                 "add_text",
-                json!({"text": title, "kind": "caption", "rect": "top", "frame": 1, "until_frame": until}),
+                json!({"text": title, "kind": "caption", "rect": "top", "frame": 1, "until_frame": until, "color": "auto"}),
                 timeout,
             )
             .await
@@ -814,7 +904,7 @@ impl ThreeDmmServer {
             "review": {"verdict": review["verdict"], "issues": review["issues"]},
             "notes": notes,
         });
-        Ok(vec![ContentBlock::text(result.to_string())])
+        Ok(result)
     }
 
     async fn export_video(
@@ -891,6 +981,7 @@ impl ThreeDmmServer {
             }
             Kind::SpeakLine => self.speak_line(args, timeout).await,
             Kind::ScriptScene => self.script_scene(args, timeout).await,
+            Kind::ScriptMovie => self.script_movie(args, timeout).await,
             Kind::BridgeImage(cmd) => {
                 let result = self.bridge_call(cmd, args, timeout).await?;
                 let path = result

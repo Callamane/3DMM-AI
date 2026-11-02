@@ -22,6 +22,8 @@ pub enum Kind {
     SpeakLine,
     /// Build a whole scene from a script (MCP side, composed of bridge calls).
     ScriptScene,
+    /// Build a whole movie from scripted scenes, optionally exporting it.
+    ScriptMovie,
 }
 
 pub struct ToolSpec {
@@ -78,6 +80,56 @@ fn actor_ref(desc: &str) -> Value {
 
 fn frame_prop() -> Value {
     json!({"type": "integer", "minimum": 1, "description": "Go to this frame of the current scene first (default: the current frame)."})
+}
+
+/// The fields of one scripted scene (script_scene, and each of
+/// script_movie's scenes)
+fn scene_script_properties() -> Value {
+    json!({
+        "background": {"type": "string", "description": "Set name or a word from its description (\"diner\", \"haunted\")."},
+        "camera": {"type": "integer", "minimum": 0, "description": "Starting camera (auto_camera re-cuts anyway)."},
+        "title": {"type": "string", "description": "Caption at the top for as long as it takes to read."},
+        "cast": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "actor": {"type": "string", "description": "Actor template or a description word (list_templates)."},
+                    "voice": {"type": "string", "description": "Speech voice; default: a different one for each character."}
+                },
+                "required": ["name", "actor"]
+            }
+        },
+        "lines": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "who": {"type": "string"},
+                    "says": {"type": "string"},
+                    "action": {"type": ["string", "integer"], "description": "With says: how to act it (default Talk)."},
+                    "does": {"type": ["string", "integer"], "description": "An action to do instead of speaking."},
+                    "seconds": {"type": "number", "description": "With does: how long (default 2)."},
+                    "wait": {"type": "number", "description": "A pause in seconds."},
+                    "enters": {"type": "string", "enum": ["left", "right"], "description": "Walks on from off-screen to their place (they start off stage)."},
+                    "exits": {"type": "string", "enum": ["left", "right"], "description": "Walks off-screen and leaves the stage."},
+                    "walks_to": {"description": "A character (stops beside them and faces them) or a stage point {x, z}."},
+                    "throws": {"type": "string", "description": "A prop to throw (\"Sphere\" makes a ball), with 'at'."},
+                    "at": {"type": "string", "description": "With throws: who it's thrown at."},
+                    "reaction": {"type": ["string", "integer"], "description": "With throws: the target's action if hit."},
+                    "hit_sound": {"type": "string", "description": "With throws: a sound effect on the hit (\"bump\")."},
+                    "sound": {"type": "string", "description": "A sound effect by name (list_sounds type sfx), e.g. \"bell service\"; the next line doesn't wait for it."},
+                    "on": {"type": "string", "description": "With sound: the character it comes from (default: the scene)."}
+                }
+            }
+        },
+        "layout": {"type": "string", "enum": ["conversation", "line"], "default": "conversation"},
+        "camera_style": {"type": "string", "enum": ["coverage", "wide", "none"], "default": "coverage"},
+        "transition": {"type": "string", "description": "Transition after this scene (cut, dissolve, fade_to_black...)."},
+        "subtitles": {"type": "boolean", "default": false, "description": "Caption each spoken line at the bottom while it is said."},
+        "music": {"type": "string", "description": "Scene music by name or mood word (list_sounds type music: \"funny moment\", \"tense\", \"sudden danger\"...), or \"none\" to silence the set's own."}
+    })
 }
 
 fn obj(properties: Value, required: &[&str]) -> Value {
@@ -674,7 +726,7 @@ pub fn all_tools() -> Vec<ToolSpec> {
                     "rect": {"description": "Preset name or {left, top, right, bottom} pixels."},
                     "font": {"type": "string", "description": "Font name; an error lists the available fonts."},
                     "size": {"type": "integer", "minimum": 6, "maximum": 200, "description": "Pixels."},
-                    "color": {"description": "\"#rrggbb\", a color name, or [r,g,b]."},
+                    "color": {"description": "\"#rrggbb\", a color name, [r,g,b], or \"auto\" (dark text over a bright part of the picture, yellow over a dark one)."},
                     "background": {"description": "Box fill color or \"transparent\" (default)."},
                     "bold": {"type": "boolean"},
                     "italic": {"type": "boolean"},
@@ -750,52 +802,25 @@ pub fn all_tools() -> Vec<ToolSpec> {
              {\"who\": \"Frank\", \"exits\": \"right\"}, {\"sound\": \"bell service\"}. Walks step around people; \
              throws use physics. subtitles: true captions the dialogue; music picks the score.",
             obj(
-                json!({
-                    "background": {"type": "string", "description": "Set name or a word from its description (\"diner\", \"haunted\")."},
-                    "camera": {"type": "integer", "minimum": 0, "description": "Starting camera (auto_camera re-cuts anyway)."},
-                    "title": {"type": "string", "description": "Caption at the top for as long as it takes to read."},
-                    "cast": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "name": {"type": "string"},
-                                "actor": {"type": "string", "description": "Actor template or a description word (list_templates)."},
-                                "voice": {"type": "string", "description": "Speech voice; default: a different one for each character."}
-                            },
-                            "required": ["name", "actor"]
-                        }
-                    },
-                    "lines": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "who": {"type": "string"},
-                                "says": {"type": "string"},
-                                "action": {"type": ["string", "integer"], "description": "With says: how to act it (default Talk)."},
-                                "does": {"type": ["string", "integer"], "description": "An action to do instead of speaking."},
-                                "seconds": {"type": "number", "description": "With does: how long (default 2)."},
-                                "wait": {"type": "number", "description": "A pause in seconds."},
-                                "enters": {"type": "string", "enum": ["left", "right"], "description": "Walks on from off-screen to their place (they start off stage)."},
-                                "exits": {"type": "string", "enum": ["left", "right"], "description": "Walks off-screen and leaves the stage."},
-                                "walks_to": {"description": "A character (stops beside them and faces them) or a stage point {x, z}."},
-                                "throws": {"type": "string", "description": "A prop to throw (\"Sphere\" makes a ball), with 'at'."},
-                                "at": {"type": "string", "description": "With throws: who it's thrown at."},
-                                "reaction": {"type": ["string", "integer"], "description": "With throws: the target's action if hit."},
-                                "hit_sound": {"type": "string", "description": "With throws: a sound effect on the hit (\"bump\")."},
-                                "sound": {"type": "string", "description": "A sound effect by name (list_sounds type sfx), e.g. \"bell service\"; the next line doesn't wait for it."},
-                                "on": {"type": "string", "description": "With sound: the character it comes from (default: the scene)."}
-                            }
-                        }
-                    },
-                    "layout": {"type": "string", "enum": ["conversation", "line"], "default": "conversation"},
-                    "camera_style": {"type": "string", "enum": ["coverage", "wide", "none"], "default": "coverage"},
-                    "transition": {"type": "string", "description": "Transition after this scene (cut, dissolve, fade_to_black...)."},
-                    "subtitles": {"type": "boolean", "default": false, "description": "Caption each spoken line at the bottom while it is said."},
-                    "music": {"type": "string", "description": "Scene music by name or mood word (list_sounds type music: \"funny moment\", \"tense\", \"sudden danger\"...), or \"none\" to silence the set's own."}
-                }),
+                scene_script_properties(),
                 &["background", "cast", "lines"],
+            ),
+        ),
+        spec(
+            "script_movie",
+            Kind::ScriptMovie,
+            "Build a whole movie in one call: 'scenes' is a list of scene scripts, each exactly like a \
+             script_scene call (background, cast, lines, subtitles, music, transition...). Every scene is \
+             checked before anything is built (errors name the scene and line); a character keeps the same \
+             actor and voice in every scene. Returns each scene's report (timings, shots, review), the total \
+             length, and, with 'export', the MP4. target_seconds adds a note if the length is far off.",
+            obj(
+                json!({
+                    "scenes": {"type": "array", "minItems": 1, "items": {"type": "object", "properties": scene_script_properties(), "required": ["background", "cast", "lines"]}},
+                    "target_seconds": {"type": "number", "minimum": 1},
+                    "export": {"type": "string", "description": "Absolute .mp4 path to export the finished movie to."}
+                }),
+                &["scenes"],
             ),
         ),
         spec(
@@ -1030,6 +1055,7 @@ pub fn all_tools() -> Vec<ToolSpec> {
         match tool.name {
             "play" => tool.timeout_secs = 15 * 60,
             "script_scene" => tool.timeout_secs = 10 * 60,
+            "script_movie" => tool.timeout_secs = 30 * 60,
             "export_frames" | "export_video" => tool.timeout_secs = 20 * 60,
             "goto_studio" | "launch" | "preview_cameras" | "describe_timeline" | "storyboard"
             | "suggest_camera" | "review_movie" | "auto_camera" => tool.timeout_secs = 120,
@@ -1042,7 +1068,7 @@ pub fn all_tools() -> Vec<ToolSpec> {
 /// Short workflow guide, served as an MCP resource and prompt.
 pub const WORKFLOW_GUIDE: &str = r#"# Making a movie with 3D Movie Maker
 
-0. **Fastest start** — `script_scene(background, cast, lines)` builds a whole scene from a script (set, cast, blocking, dialogue, cuts, review) in one call; then refine it with the tools below. Call it once per scene.
+0. **Fastest start** — `script_movie(scenes: [...], export: ".../movie.mp4")` builds and exports a whole movie in one call; `script_scene(background, cast, lines)` does one scene (set, cast, blocking, dialogue, staging, sound, cuts, review). Then refine with the tools below.
 1. **Plan** — movies run at 6 frames per second; a 30 s movie is ~180 frames across all scenes. Each scene has its own frame numbers from 1 and lasts as long as its longest-living actor.
 2. **Pick a set** — `list_backgrounds` (each has a description; `filter: "diner"` works). `preview_cameras(background)` shows every camera angle on one image without changing the movie.
 3. **Scene** — `add_scene(background, camera)`. A new movie has no scenes; add one before anything else.

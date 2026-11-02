@@ -603,6 +603,21 @@ on the way:
   lines are said faster than read. A script with a throw blocks the group
   2 m apart (1 m left no room, and the prop spawned against the target),
   and the prop appears up to 0.6 m in front of the thrower.
+* `script_movie` parses every scene before building any (errors say
+  `scenes[i]: lines[j]: ...`), requires a character to keep one actor
+  across scenes, and gives each character one voice for the whole movie
+  (the one named anywhere, else a distinct installed voice). It
+  checkpoints once, builds the scenes in order, totals warnings and length
+  (`target_seconds` adds a note when more than 20% off) and can export the
+  MP4. "Make me a 30-second movie of two guys arguing in a diner" became
+  one call: two scenes, 31.5 s, subtitles, music, a throw and an exit,
+  built and exported in 7.4 s with no review warnings.
+* `add_text(color: "auto")` renders the 3D picture, averages the
+  brightness under the text box and picks dark navy text over bright areas
+  (above 0.55) or yellow over dark ones; scripts use it for subtitles and
+  titles (yellow subtitles over the diner's cream counter were unreadable).
+* review_movie notes, rather than warns about, an actor hidden for under a
+  second by another actor walking past in front.
 * auto_camera penalises a shot where another actor covers over 45% of the
   frame (someone pressed against the lens), and the framing score drops
   faster for subjects bigger than ideal than for ones a little small.

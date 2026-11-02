@@ -227,6 +227,47 @@ async fn script_scene_builds_a_reviewed_scene() -> Result<()> {
         ensure!(!on_stage_at(&late), "Cal has left: {late}");
     }
 
+    // A whole movie: a bad later scene stops it before anything is built,
+    // and a character keeps one voice across scenes
+    c.tool("new_movie", json!({"discard_changes": true}))
+        .await?;
+    let cast = json!([{"name": "Ann", "actor": "Bella"}, {"name": "Bob", "actor": "Gregory"}]);
+    let good =
+        json!({"background": "diner", "cast": cast, "lines": [{"who": "Ann", "says": "Hi."}]});
+    let bad =
+        json!({"background": "diner", "cast": cast, "lines": [{"who": "Nobody", "says": "Hi."}]});
+    let err = c
+        .tool("script_movie", json!({"scenes": [good, bad]}))
+        .await
+        .unwrap_err()
+        .to_string();
+    ensure!(err.contains("scenes[1]"), "{err}");
+    let state = c.tool("get_state", json!({})).await?;
+    ensure!(state["movie"]["scene_count"] == 0, "nothing built: {state}");
+    let second = json!({"background": "diner", "cast": cast, "subtitles": true,
+                        "lines": [{"who": "Bob", "says": "Hello again."}]});
+    let movie = c
+        .tool(
+            "script_movie",
+            json!({"scenes": [good, second], "target_seconds": 60}),
+        )
+        .await?;
+    ensure!(
+        movie["scenes"].as_array().map(Vec::len) == Some(2),
+        "{movie}"
+    );
+    ensure!(
+        movie["length_note"].is_string(),
+        "far from the target: {movie}"
+    );
+    let voice = |scene: usize, who: &str| {
+        movie["scenes"][scene]["cast"]
+            .as_array()
+            .and_then(|c| c.iter().find(|m| m["name"] == who))
+            .map(|m| m["voice"].clone())
+    };
+    ensure!(voice(0, "Bob") == voice(1, "Bob"), "{movie}");
+
     c.tool("quit", json!({"discard_changes": true})).await.ok();
     Ok(())
 }

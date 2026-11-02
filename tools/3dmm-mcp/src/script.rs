@@ -442,6 +442,69 @@ pub fn clear_spot(spot: (f64, f64), taken: &[(f64, f64)]) -> (f64, f64) {
     spot
 }
 
+/// Parses a movie: `scenes` is a list of scene scripts (as for parse), all
+/// checked before anything is built. A character keeps the same actor in
+/// every scene they appear in, and a voice given once applies throughout.
+pub fn parse_movie(args: &Value) -> Result<Vec<Script>, String> {
+    let scenes = args
+        .get("scenes")
+        .and_then(Value::as_array)
+        .filter(|s| !s.is_empty())
+        .ok_or("'scenes' must list at least one scene (each like a script_scene call)")?;
+    if scenes.len() > 50 {
+        return Err("at most 50 scenes per movie".into());
+    }
+    let mut scripts = Vec::new();
+    for (i, scene) in scenes.iter().enumerate() {
+        scripts.push(parse(scene).map_err(|err| format!("scenes[{i}]: {err}"))?);
+    }
+    let mut seen: Vec<(String, String, usize)> = Vec::new();
+    for (i, script) in scripts.iter().enumerate() {
+        for member in &script.cast {
+            match seen.iter().find(|(name, _, _)| name.eq_ignore_ascii_case(&member.name)) {
+                Some((name, actor, first)) if !actor.eq_ignore_ascii_case(&member.actor) => {
+                    return Err(format!(
+                        "scenes[{i}]: {name} is played by '{}' here but by '{actor}' in scenes[{first}]",
+                        member.actor
+                    ))
+                }
+                Some(_) => {}
+                None => seen.push((member.name.clone(), member.actor.clone(), i)),
+            }
+        }
+    }
+    Ok(scripts)
+}
+
+/// Gives each character one voice for the whole movie: the one the script
+/// names anywhere, else a different installed voice per character
+pub fn assign_movie_voices(scripts: &mut [Script], installed: &[(String, String)]) {
+    let mut everyone: Vec<CastMember> = Vec::new();
+    for script in scripts.iter() {
+        for member in &script.cast {
+            match everyone
+                .iter_mut()
+                .find(|m| m.name.eq_ignore_ascii_case(&member.name))
+            {
+                Some(known) if known.voice.is_none() => known.voice = member.voice.clone(),
+                Some(_) => {}
+                None => everyone.push(member.clone()),
+            }
+        }
+    }
+    assign_voices(&mut everyone, installed);
+    for script in scripts.iter_mut() {
+        for member in &mut script.cast {
+            if let Some(known) = everyone
+                .iter()
+                .find(|m| m.name.eq_ignore_ascii_case(&member.name))
+            {
+                member.voice = known.voice.clone();
+            }
+        }
+    }
+}
+
 /// Installed voices from `say -v '?'` output: (name, locale)
 pub fn parse_say_voices(output: &str) -> Vec<(String, String)> {
     output
@@ -666,6 +729,42 @@ mod tests {
                                 "lines": [{"who": "A", "says": "hi"}, {"who": "B", "exits": "left"}, {"sound": "bump", "on": "B"}]}))
             .unwrap_err();
         assert!(err.contains("lines[2]"), "{err}");
+    }
+
+    #[test]
+    fn movies_keep_characters_consistent() {
+        let scene = |cast: Value| json!({"background": "diner", "cast": cast, "lines": [{"who": "Ann", "says": "Hi"}]});
+        let movie = json!({"scenes": [
+            scene(json!([{"name": "Ann", "actor": "Bella"}, {"name": "Bob", "actor": "Gregory", "voice": "Fred"}])),
+            scene(json!([{"name": "Ann", "actor": "bella"}, {"name": "Bob", "actor": "Gregory"}]))
+        ]});
+        let mut scripts = parse_movie(&movie).unwrap();
+        let installed: Vec<(String, String)> = [("Daniel", "en_GB"), ("Fred", "en_US")]
+            .iter()
+            .map(|(n, l)| (n.to_string(), l.to_string()))
+            .collect();
+        assign_movie_voices(&mut scripts, &installed);
+        // Bob's voice from scene 0 carries into scene 1; Ann gets another one in both
+        assert_eq!(scripts[1].cast[1].voice.as_deref(), Some("Fred"));
+        assert_eq!(scripts[0].cast[0].voice.as_deref(), Some("Daniel"));
+        assert_eq!(scripts[1].cast[0].voice.as_deref(), Some("Daniel"));
+
+        let recast = json!({"scenes": [
+            scene(json!([{"name": "Ann", "actor": "Bella"}])),
+            scene(json!([{"name": "Ann", "actor": "Roxanne"}]))
+        ]});
+        let err = parse_movie(&recast).unwrap_err();
+        assert!(
+            err.contains("scenes[1]") && err.contains("Roxanne") && err.contains("scenes[0]"),
+            "{err}"
+        );
+
+        let mut broken = movie.clone();
+        broken["scenes"][1]["lines"][0]["who"] = json!("Zed");
+        assert!(parse_movie(&broken)
+            .unwrap_err()
+            .starts_with("scenes[1]: lines[0]"));
+        assert!(parse_movie(&json!({"scenes": []})).is_err());
     }
 
     #[test]
