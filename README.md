@@ -2,10 +2,13 @@
 
 # 3DMM-AI
 
-**An MCP server that turns Microsoft 3D Movie Maker (1995) into a film studio for your AI assistant.**
+**Microsoft 3D Movie Maker (1995), rebuilt so your AI assistant can make movies in it.**
 
 Describe a short film, and your assistant casts it, blocks it, voices it, acts it, cuts it and exports the MP4,
 inside the real 3D Movie Maker engine, with the 6 fps, Comic Sans charm intact.
+
+This repo is the complete app, from the [3DMMEx](https://github.com/benstone/3DMMEx) cross-platform port, plus an
+automation bridge built into it and an MCP server that drives it. Build it and you have everything.
 
 <img src="doc/media/hero.gif" width="680" alt="Two characters talking in the diner set, with subtitles and cuts between angles">
 
@@ -49,6 +52,9 @@ finished `.3mm` movie and an MP4:
   hand.
 
 ## Quick start
+
+The build below produces 3D Movie Maker itself, with all its actors, sets and sounds, so there's nothing else to
+install.
 
 **macOS** (Apple Silicon or Intel). You need Xcode command line tools, CMake 3.28+, Ninja, a bootstrapped
 [vcpkg](https://vcpkg.io) checkout, Rust and ffmpeg (`brew install ffmpeg`).

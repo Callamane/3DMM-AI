@@ -43,7 +43,7 @@ summary lines in the pull request.
 
 ### Coding style
 
-* C++: use the included clang-format configuration; a GitHub Action checks it. Code inherited from 3D Movie Maker
+* C++: format with the included clang-format configuration. Code inherited from 3D Movie Maker
   uses Microsoft's Apps Hungarian style (see [Hungarian Notation by Doug Klunder](https://idleloop.com/hungarian/));
   keep to it there and in the bridge, and prefer the Kauai types (`STN`, `GL`) in engine code.
 * Rust: `cargo fmt` and clippy with warnings as errors.
