@@ -196,6 +196,28 @@ PGL PglclrScene(PBKGD pbkgd);
 void UseScenePalette(PMVIE pmvie);
 
 void RefreshViews(PMVIE pmvie);
+
+// Goes to nfrm making the scene replay its events even when it is already
+// there (FGotoFrm then does nothing), which also undoes a camera that was
+// tried directly on the background
+bool FGotoFrameFresh(PSCEN pscen, int32_t nfrm);
+
+// Puts the movie back on the scene and frame it was on when this goes out of
+// scope: commands that step through scenes leave the view as they found it,
+// also when they fail partway
+class ScenePlaceRestore
+{
+  public:
+    explicit ScenePlaceRestore(PMVIE pmvie);
+    ~ScenePlaceRestore();
+    ScenePlaceRestore(const ScenePlaceRestore &) = delete;
+    ScenePlaceRestore &operator=(const ScenePlaceRestore &) = delete;
+
+  private:
+    PMVIE _pmvie;
+    int32_t _iscen;
+    int32_t _nfrm;
+};
 // Renders the 3D world for the current frame so actor screen bounds are current
 void EnsureRendered(PMVIE pmvie);
 

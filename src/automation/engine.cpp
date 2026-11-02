@@ -501,6 +501,31 @@ void UseScenePalette(PMVIE pmvie)
     ReleasePpo(&pglclrScene);
 }
 
+bool FGotoFrameFresh(PSCEN pscen, int32_t nfrm)
+{
+    if (pscen->Nfrm() == nfrm && pscen->NfrmLast() > pscen->NfrmFirst())
+        pscen->FGotoFrm(nfrm > pscen->NfrmFirst() ? pscen->NfrmFirst() : nfrm + 1);
+    return pscen->FGotoFrm(nfrm);
+}
+
+ScenePlaceRestore::ScenePlaceRestore(PMVIE pmvie)
+    : _pmvie(pmvie), _iscen(pmvie->Iscen()), _nfrm(pmvie->Pscen() != pvNil ? pmvie->Pscen()->Nfrm() : ivNil)
+{
+}
+
+ScenePlaceRestore::~ScenePlaceRestore()
+{
+    if (_iscen == ivNil || _nfrm == ivNil || _iscen >= _pmvie->Cscen())
+        return;
+    if (_iscen != _pmvie->Iscen() && !_pmvie->FSwitchScen(_iscen))
+        return;
+    PSCEN pscen = _pmvie->Pscen();
+    if (pscen == pvNil)
+        return;
+    FGotoFrameFresh(pscen, LwBound(_nfrm, pscen->NfrmFirst(), pscen->NfrmLast() + 1));
+    RefreshViews(_pmvie);
+}
+
 void RefreshViews(PMVIE pmvie)
 {
     if (pmvie == pvNil)

@@ -134,6 +134,7 @@ static bool _FCmdAutoCamera(Request &req)
     PSCEN pscen;
     if (!FRequireScene(req, &pmvie, &pscen) || !FRequireNotPlaying(req, pmvie))
         return fFalse;
+    ScenePlaceRestore restore(pmvie);
     if (req.FHasArg("scene"))
     {
         int32_t iscen;
@@ -187,8 +188,9 @@ static bool _FCmdAutoCamera(Request &req)
             vecCams.push_back(icam);
     }
 
+    if (vecCams.empty())
+        return req.Fail(kszErrBadState, "this set has no cameras to choose from");
     int32_t nfrmFirst = pscen->NfrmFirst(), nfrmLast = pscen->NfrmLast();
-    int32_t nfrmRestore = pscen->Nfrm();
     std::vector<PACTR> vecActors;
     PGL pglpactr = pscen->PglRollCall();
     for (int32_t ipactr = 0; pglpactr != pvNil && ipactr < pglpactr->IvMac(); ipactr++)
@@ -222,7 +224,6 @@ static bool _FCmdAutoCamera(Request &req)
     RC rcView(0, 0, 544, 306);
     if (PmvuCur() != pvNil)
         PmvuCur()->GetRc(&rcView, cooLocal);
-    int32_t icamRestore = pbkgd->Icam();
     std::vector<std::vector<double>> vecvecScore(vecBeats.size(), std::vector<double>(vecCams.size(), 1e9));
     std::vector<std::vector<bool>> vecvecFaceAway(vecBeats.size(), std::vector<bool>(vecCams.size(), false));
     for (size_t ibeat = 0; ibeat < vecBeats.size(); ibeat++)
@@ -246,7 +247,8 @@ static bool _FCmdAutoCamera(Request &req)
             }
         }
     }
-    pbkgd->FSetCamera(pmvie->Pbwld(), icamRestore);
+    // Back to the cameras the scene's own events set (scoring set them directly)
+    FGotoFrameFresh(pscen, nfrmFirst);
 
     std::vector<int32_t> vecChoice = VecChooseShots(vecvecScore, dCutPenalty);
     std::vector<int32_t> vecBeatStart;
@@ -304,8 +306,6 @@ static bool _FCmdAutoCamera(Request &req)
         jsonShots.Push(json);
         ccut++;
     }
-    pscen->FGotoFrm(nfrmRestore);
-    RefreshViews(pmvie);
     req.result.Set("style", pstyle->pszName);
     req.result.Set("applied", fApply);
     req.result.Set("beats", static_cast<int>(vecBeats.size()));

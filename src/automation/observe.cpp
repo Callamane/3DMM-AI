@@ -252,6 +252,8 @@ bool FMeanLuminance(PMVIE pmvie, RC rc, double *pdLuma)
     if (!_FRenderWorld(pmvie, &rcView, &img))
         return fFalse;
     std::vector<PngColor> palette = _PaletteCur();
+    if (palette.empty())
+        return fFalse;
     double dSum = 0;
     for (int32_t y = rcClip.ypTop; y < rcClip.ypBottom; y++)
     {
@@ -578,8 +580,7 @@ static bool _FCmdStoryboard(Request &req)
     }
     cframe = LwBound(cframe, 2, kcStoryboardMax + 1);
 
-    int32_t iscenRestore = pmvie->Iscen();
-    int32_t nfrmRestore = pscen->Nfrm();
+    ScenePlaceRestore restore(pmvie);
     std::vector<StoryCell> vecCells;
     if (fAllScenes)
     {
@@ -690,10 +691,6 @@ static bool _FCmdStoryboard(Request &req)
         }
     }
 
-    if (iscenRestore != pmvie->Iscen())
-        pmvie->FSwitchScen(iscenRestore);
-    pmvie->Pscen()->FGotoFrm(nfrmRestore);
-    RefreshViews(pmvie);
     if (req.Failed())
         return fFalse;
 

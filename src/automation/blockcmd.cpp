@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 ASSERTNAME
 
@@ -26,6 +27,13 @@ const double krgdShift[] = {0, 0.6, -0.6, 1.2, -1.2}; // sideways tries, metres
 // picture meets the floor), so the search starts in front of the camera
 // whatever the set's placement point is
 const double krgdDepth[] = {1.0, 1.4, 1.8, 2.3, 2.8, 3.4, 4.1, 5.0};
+
+static std::string _StrMetres(double d)
+{
+    char sz[32];
+    snprintf(sz, sizeof(sz), "%.1f", d);
+    return sz;
+}
 
 static bool _FCmdArrangeActors(Request &req)
 {
@@ -239,8 +247,7 @@ static bool _FCmdArrangeActors(Request &req)
     req.result.Set("actors", jsonList);
     if (!strProblem.empty())
     {
-        req.result.Set("framing", strProblem + " at every spot tried (up to z = " + std::to_string(zUsed).substr(0, 3) +
-                                      ")" +
+        req.result.Set("framing", strProblem + " at every spot tried (up to z = " + _StrMetres(zUsed) + ")" +
                                       "; try another camera (suggest_camera), a smaller spacing, or fewer actors");
     }
     req.result.Set("note", "positions are this camera's stage coordinates; undo only reverts one actor, so "

@@ -111,6 +111,7 @@ static bool _FCmdPhysics(Request &req)
         return FFailEngine(req, "no camera");
     EnsureRendered(pmvie);
     int32_t nfrmStart = pscen->Nfrm();
+    ScenePlaceRestore restore(pmvie);
     Vec3 start = stage.FromWorld(_PosWorld(pactr));
     double dBodyHeight;
     GetActorFootprint(pactr, &params.radius, &dBodyHeight);
@@ -198,6 +199,21 @@ static bool _FCmdPhysics(Request &req)
     int32_t cfrm = static_cast<int32_t>(vecFrames.size()) - 1;
     if (cfrm < 1)
         return req.Fail(kszErrBadArgs, "nothing moves: the actor is already at rest");
+    // A hard landing in the last two frames still needs its stretch and its
+    // return to normal, which come two frames later: hold the rest pose on
+    for (int32_t ifrm = LwMax(1, cfrm - 1); fSquash && ifrm <= cfrm; ifrm++)
+    {
+        if (!vecFrames[ifrm].fImpact || vecFrames[ifrm].iobstacleHit >= 0)
+            continue;
+        PhysicsFrame rest = vecFrames.back();
+        rest.fImpact = false;
+        rest.impactSpeed = 0;
+        rest.iobstacleHit = -1;
+        rest.velocity = Vec3(0, 0, 0);
+        while (static_cast<int32_t>(vecFrames.size()) - 1 < ifrm + 2)
+            vecFrames.push_back(rest);
+    }
+    cfrm = static_cast<int32_t>(vecFrames.size()) - 1;
 
     // Bake it into the movie
     PACTR pactrDup;

@@ -464,8 +464,7 @@ static bool _FCmdReviewMovie(Request &req)
         iscenLim = iscen + 1;
     }
 
-    int32_t iscenRestore = pmvie->Iscen();
-    int32_t nfrmRestore = pmvie->Pscen()->Nfrm();
+    ScenePlaceRestore restore(pmvie);
     std::vector<Issue> vecIssues;
     int32_t cfrmTotal = 0, ccut = 0, cshot = 0;
     bool fSound = false;
@@ -511,11 +510,6 @@ static bool _FCmdReviewMovie(Request &req)
                              "there is no sound at all",
                              "give characters lines (speak_line) or add music (attach_sound)"});
     }
-
-    if (iscenRestore != pmvie->Iscen())
-        pmvie->FSwitchScen(iscenRestore);
-    pmvie->Pscen()->FGotoFrm(nfrmRestore);
-    RefreshViews(pmvie);
 
     // Warnings first, then by scene and frame
     std::stable_sort(vecIssues.begin(), vecIssues.end(), [](const Issue &a, const Issue &b) {
