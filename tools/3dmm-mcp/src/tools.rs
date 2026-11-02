@@ -875,6 +875,7 @@ pub fn all_tools() -> Vec<ToolSpec> {
                     "scale": {"type": "integer", "enum": [1, 2, 3], "default": 2, "description": "Pixel scale of the 544x306 movie (2 = 1088x612)."},
                     "audio": {"type": "boolean", "default": true},
                     "transition_seconds": {"type": "number", "minimum": 0, "maximum": 5, "default": 1},
+                    "smooth": {"type": "boolean", "default": false, "description": "Add motion-interpolated in-between frames for smoother movement than the movie's 6 fps (the .3mm is unchanged; fast limbs can smear a little)."},
                     "scene": {"type": "integer", "minimum": 0, "description": "Export only this scene."}
                 }),
                 &["path"],

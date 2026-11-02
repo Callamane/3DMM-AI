@@ -531,6 +531,13 @@ on the way:
 * review_movie flags collisions: two on-stage actors closer than 70% of
   their combined footprint radii at the same height ("walk through each
   other" if either is moving, else "stand inside each other").
+* Frame rate: 6 fps is a compile-time constant (`kfps`, inc/socdef.h), not
+  stored in the movie. Everything in a .3mm counts frames (each action pose,
+  each step, sound starts), so raising it would speed up every movie,
+  including the shipped ones, while sounds keep real time and drift. For
+  smoother video without touching the movie, `export_video(smooth: true)`
+  motion-interpolates in-betweens with ffmpeg's minterpolate (6 -> 24 fps
+  before scaling); fast limbs can smear a little, so it is opt-in.
 * `review_movie` (reviewcmd.cpp; rules in review.cpp, unit tested) steps
   every frame of each scene without rendering to track movement, action
   changes, sound starts, cuts and text visibility, then renders every third

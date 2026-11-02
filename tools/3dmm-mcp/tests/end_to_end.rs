@@ -303,6 +303,7 @@ async fn builds_saves_and_reopens_a_two_scene_movie() -> Result<()> {
             scale: 1,
             transition_seconds: 1.0,
             audio: true,
+            smooth: true,
         };
         let summary = threedmm_mcp::video::render(&manifest, &mp4, &options).await?;
         println!("video: {summary}");

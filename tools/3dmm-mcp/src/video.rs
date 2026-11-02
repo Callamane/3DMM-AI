@@ -12,10 +12,30 @@ use tokio::process::Command;
 /// cope better with a standard rate).
 const OUTPUT_FPS: u32 = 30;
 
+/// Rate the in-between frames are made at when smoothing (the movie's
+/// own frames stay; three motion-interpolated ones go between each pair)
+const SMOOTH_FPS: u32 = 24;
+
 pub struct VideoOptions {
     pub scale: u32,
     pub transition_seconds: f64,
     pub audio: bool,
+    /// Motion-interpolate between the movie's 6 fps frames for smoother
+    /// movement (some smearing on fast limbs)
+    pub smooth: bool,
+}
+
+/// Filter chain for one scene's frames: optional in-betweens at the movie's
+/// own resolution, then pixel-exact scaling to the output size and rate
+pub fn scene_filter(input: usize, width: u32, height: u32, smooth: bool) -> String {
+    let tween = if smooth {
+        format!("minterpolate=fps={SMOOTH_FPS}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1,")
+    } else {
+        String::new()
+    };
+    format!(
+        "[{input}:v]{tween}scale={width}:{height}:flags=neighbor,fps={OUTPUT_FPS},format=yuv420p,settb=AVTB[v{input}]"
+    )
 }
 
 /// Finds ffmpeg: `THREEDMM_FFMPEG`, then the PATH, then Homebrew's prefixes.
@@ -140,9 +160,7 @@ pub async fn render(manifest: &Value, out: &Path, options: &VideoOptions) -> Res
             "-i".into(),
             pattern.into(),
         ]);
-        filters.push(format!(
-            "[{i}:v]scale={width}:{height}:flags=neighbor,fps={OUTPUT_FPS},format=yuv420p,settb=AVTB[v{i}]"
-        ));
+        filters.push(scene_filter(i, width, height, options.smooth));
     }
     let mut current = "v0".to_string();
     let mut length = durations[0];
@@ -257,6 +275,7 @@ pub async fn render(manifest: &Value, out: &Path, options: &VideoOptions) -> Res
     Ok(json!({
         "path": out.to_string_lossy(),
         "seconds": (plan.total * 100.0).round() / 100.0,
+        "smooth": options.smooth,
         "width": width,
         "height": height,
         "scenes": scenes.len(),
@@ -269,6 +288,17 @@ pub async fn render(manifest: &Value, out: &Path, options: &VideoOptions) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn smoothing_adds_inbetweens_before_scaling() {
+        let plain = scene_filter(0, 1088, 612, false);
+        assert!(!plain.contains("minterpolate"));
+        assert!(plain.starts_with("[0:v]scale=1088:612"));
+        let smooth = scene_filter(2, 1088, 612, true);
+        let tween = smooth.find("minterpolate").unwrap();
+        assert!(tween < smooth.find("scale=").unwrap(), "{smooth}");
+        assert!(smooth.ends_with("[v2]"));
+    }
 
     #[test]
     fn cuts_butt_scenes_together() {

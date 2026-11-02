@@ -228,6 +228,7 @@ impl ThreeDmmServer {
                 .unwrap_or(1.0)
                 .clamp(0.0, 5.0),
             audio: args.get("audio").and_then(Value::as_bool).unwrap_or(true),
+            smooth: args.get("smooth").and_then(Value::as_bool).unwrap_or(false),
         };
 
         // Frames and sounds go to a scratch folder that is removed afterwards
