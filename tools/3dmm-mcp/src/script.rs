@@ -926,25 +926,78 @@ pub fn camera_beats(played: &[Value], staging_camera: Option<i64>) -> Vec<Value>
     beats
 }
 
+/// A shot held longer than this (frames at 6 fps) looks static: a long
+/// exchange should cut at least once
+const LONG_HOLD_FRAMES: i64 = 60;
+
 /// How good a built scene is, for choosing between stagings: its warnings
-/// (the review's and the shot list's), then how many camera angles it cuts
-/// between (up to three; a scene that can only hold one shot looks static)
-pub fn build_quality(built: &Value) -> (usize, usize) {
+/// (the review's and the shot list's), then shots held too long, then how
+/// many camera angles it cuts between (up to three)
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BuildQuality {
+    pub warnings: usize,
+    pub long_holds: usize,
+    pub angles: usize,
+}
+
+impl BuildQuality {
+    /// Whether this beats `other`: fewer warnings, then fewer long holds,
+    /// then more angles; a tie keeps the other
+    pub fn better_than(&self, other: &BuildQuality) -> bool {
+        (other.warnings, other.long_holds, self.angles)
+            > (self.warnings, self.long_holds, other.angles)
+    }
+
+    /// Nothing worth restaging for
+    pub fn is_clean(&self) -> bool {
+        self.warnings == 0 && self.long_holds == 0
+    }
+}
+
+pub fn build_quality(built: &Value) -> BuildQuality {
     let review = built["review"]["issues"].as_array().map_or(0, |issues| {
         issues.iter().filter(|i| i["severity"] == "warning").count()
     });
     let shots = built["shots"].as_array().cloned().unwrap_or_default();
     let shot_warnings = shots.iter().filter(|s| s.get("warning").is_some()).count();
+    let long_holds = shots
+        .iter()
+        .filter(|s| match (s["from"].as_i64(), s["to"].as_i64()) {
+            (Some(from), Some(to)) => to - from + 1 > LONG_HOLD_FRAMES,
+            _ => false,
+        })
+        .count();
     let mut cameras: Vec<i64> = shots.iter().filter_map(|s| s["camera"].as_i64()).collect();
     cameras.sort_unstable();
     cameras.dedup();
-    (review + shot_warnings, cameras.len().min(3))
+    BuildQuality {
+        warnings: review + shot_warnings,
+        long_holds,
+        angles: cameras.len().min(3),
+    }
 }
 
-/// Whether a build of quality `a` beats one of quality `b`: fewer warnings,
-/// then more angles
-pub fn better_build(a: (usize, usize), b: (usize, usize)) -> bool {
-    a.0 < b.0 || (a.0 == b.0 && a.1 > b.1)
+/// How promising a staging camera is, from arrange_actors' report of the
+/// cast blocked for it: how many of them some other camera shows face-on,
+/// then how many such angles there are, then whether the blocking fits the
+/// staging camera's own frame (it often isn't one of the angles cut to: in
+/// the cave, staging for camera 6 gives the best cuts between 0 and 5).
+pub fn staging_promise(arranged: &Value) -> (usize, usize, bool) {
+    let fits = arranged.get("framing").is_none();
+    let angles = arranged["other_angles"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let mut faces: Vec<&str> = angles
+        .iter()
+        .filter_map(|a| a["faces"].as_array())
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    let total = faces.len();
+    faces.sort_unstable();
+    faces.dedup();
+    (faces.len(), total, fits)
 }
 
 #[cfg(test)]
@@ -1411,16 +1464,66 @@ mod tests {
     }
 
     #[test]
-    fn builds_compare_by_warnings_then_angles() {
+    fn builds_compare_by_warnings_then_holds_then_angles() {
         let built = json!({
             "review": {"issues": [{"severity": "warning"}, {"severity": "info"}]},
-            "shots": [{"camera": 3}, {"camera": 1, "warning": "across the line"}, {"camera": 3}]
+            "shots": [{"camera": 3, "from": 1, "to": 30}, {"camera": 1, "from": 31, "to": 50, "warning": "across the line"},
+                      {"camera": 3, "from": 51, "to": 80}]
         });
-        assert_eq!(build_quality(&built), (2, 2));
-        let clean_static = json!({"review": {"issues": []}, "shots": [{"camera": 1}]});
-        assert_eq!(build_quality(&clean_static), (0, 1));
-        assert!(better_build((0, 1), (2, 2)), "fewer warnings first");
-        assert!(better_build((0, 2), (0, 1)), "then more angles");
-        assert!(!better_build((0, 2), (0, 2)), "a tie keeps the first");
+        assert_eq!(
+            build_quality(&built),
+            BuildQuality {
+                warnings: 2,
+                long_holds: 0,
+                angles: 2
+            }
+        );
+        // One angle for 15 s
+        let held = json!({"review": {"issues": []}, "shots": [{"camera": 1, "from": 1, "to": 92}]});
+        assert_eq!(
+            build_quality(&held),
+            BuildQuality {
+                warnings: 0,
+                long_holds: 1,
+                angles: 1
+            }
+        );
+        let cut = BuildQuality {
+            warnings: 0,
+            long_holds: 0,
+            angles: 2,
+        };
+        assert!(
+            build_quality(&held).better_than(&build_quality(&built)),
+            "fewer warnings first"
+        );
+        assert!(
+            cut.better_than(&build_quality(&held)),
+            "then fewer long holds"
+        );
+        assert!(
+            BuildQuality { angles: 3, ..cut }.better_than(&cut),
+            "then more angles"
+        );
+        assert!(!cut.better_than(&cut), "a tie keeps the first");
+        assert!(!build_quality(&held).is_clean() && cut.is_clean());
+    }
+
+    #[test]
+    fn staging_promise_counts_people_then_angles() {
+        let two_covered = json!({"other_angles": [{"camera": 4, "faces": ["Ann"]}, {"camera": 9, "faces": ["Bob", "Ann"]}]});
+        assert_eq!(staging_promise(&two_covered), (2, 3, true));
+        let one_covered = json!({"other_angles": [{"camera": 1, "faces": ["Ann"]}, {"camera": 2, "faces": ["Ann"]},
+                                                   {"camera": 3, "faces": ["Ann"]}]});
+        assert_eq!(staging_promise(&one_covered), (1, 3, true));
+        assert!(staging_promise(&two_covered) > staging_promise(&one_covered));
+        assert_eq!(staging_promise(&json!({"x": 0})), (0, 0, true));
+        // A blocking that doesn't fit its own camera still counts its angles,
+        // and only loses a tie
+        let cramped = json!({"framing": "someone is out of shot", "other_angles": [{"camera": 1, "faces": ["Ann"]}]});
+        assert_eq!(staging_promise(&cramped), (1, 1, false));
+        assert!(staging_promise(&cramped) > staging_promise(&json!({"x": 0})));
+        let roomy = json!({"other_angles": [{"camera": 1, "faces": ["Ann"]}]});
+        assert!(staging_promise(&roomy) > staging_promise(&cramped));
     }
 }

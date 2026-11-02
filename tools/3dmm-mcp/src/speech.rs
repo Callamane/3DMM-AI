@@ -2,7 +2,9 @@
 //! PowerShell. Produces a 16-bit PCM WAV the app can import.
 
 use std::path::{Path, PathBuf};
+use std::process::ExitStatus;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use tokio::process::Command;
@@ -10,6 +12,35 @@ use tokio::process::Command;
 use crate::script::Prosody;
 
 static NEXT_LINE: AtomicU32 = AtomicU32::new(1);
+
+/// A synthesizer that hasn't finished one line in this long has stalled
+/// (macOS `say` now and then sits at 0% CPU and never returns)
+const SYNTH_TIMEOUT: Duration = Duration::from_secs(30);
+/// Tries before giving up on a stalled synthesizer
+const SYNTH_ATTEMPTS: u32 = 2;
+
+/// Runs `command` to completion, killing and restarting it if it takes
+/// longer than `limit`, up to SYNTH_ATTEMPTS times
+async fn run_with_timeout(
+    command: &mut Command,
+    what: &str,
+    limit: Duration,
+) -> Result<ExitStatus> {
+    command.kill_on_drop(true);
+    for _ in 0..SYNTH_ATTEMPTS {
+        let mut child = command.spawn().with_context(|| format!("running {what}"))?;
+        match tokio::time::timeout(limit, child.wait()).await {
+            Ok(status) => return status.with_context(|| format!("running {what}")),
+            Err(_) => {
+                let _ = child.kill().await;
+            }
+        }
+    }
+    bail!(
+        "{what} stopped responding ({SYNTH_ATTEMPTS} tries of {} s each); try the line again",
+        limit.as_secs_f64()
+    )
+}
 
 /// Installed voices as (name, locale like "en_US"): macOS `say`, Windows
 /// SAPI. Empty where they can't be listed.
@@ -83,12 +114,8 @@ pub async fn synthesize(
             spoken = commands + &spoken;
         }
         // "--" so lines starting with '-' aren't taken as options
-        command
-            .arg("--")
-            .arg(spoken)
-            .status()
-            .await
-            .context("running `say`")?
+        command.arg("--").arg(spoken);
+        run_with_timeout(&mut command, "`say`", SYNTH_TIMEOUT).await?
     } else if cfg!(target_os = "windows") {
         // Text and path are passed through the environment, never spliced
         // into the script
@@ -122,10 +149,7 @@ pub async fn synthesize(
                 );
             }
         }
-        command
-            .status()
-            .await
-            .context("running PowerShell speech synthesis")?
+        run_with_timeout(&mut command, "PowerShell speech synthesis", SYNTH_TIMEOUT).await?
     } else {
         bail!("speak_line needs macOS (`say`) or Windows (SAPI); import a WAV with import_sound instead");
     };
@@ -162,12 +186,13 @@ async fn shift_pitch(path: &Path, ratio: f64) {
         "asetrate={rate}*{ratio:.4},aresample={rate},atempo={:.4}",
         1.0 / ratio
     );
-    let ok = Command::new(ffmpeg)
+    let mut command = Command::new(ffmpeg);
+    command
         .args(["-v", "error", "-y", "-i"])
         .arg(path)
         .args(["-af", &filter, "-ac", "1", "-c:a", "pcm_s16le"])
-        .arg(&shifted)
-        .status()
+        .arg(&shifted);
+    let ok = run_with_timeout(&mut command, "ffmpeg", SYNTH_TIMEOUT)
         .await
         .is_ok_and(|status| status.success());
     if ok {
@@ -233,6 +258,31 @@ mod tests {
         let path = std::env::temp_dir().join(name);
         std::fs::write(&path, wav).unwrap();
         path
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_stalled_synthesizer_is_killed_and_reported() {
+        let started = std::time::Instant::now();
+        let mut command = Command::new("sleep");
+        command.arg("30");
+        let err = run_with_timeout(&mut command, "`sleep`", Duration::from_millis(200))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("stopped responding"), "{err}");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
+        let mut quick = Command::new("true");
+        assert!(
+            run_with_timeout(&mut quick, "`true`", Duration::from_secs(5))
+                .await
+                .unwrap()
+                .success()
+        );
     }
 
     #[test]

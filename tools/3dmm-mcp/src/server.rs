@@ -44,11 +44,29 @@ const REACTION_LEAD_FRAMES: i64 = 4;
 /// ...and lasts this long (the next line may cut it short)
 const REACTION_SECONDS: f64 = 1.5;
 
+/// arrange_actors turns a conversation toward a point this many spacings in
+/// front of the group's centre (SpotGroupFocus in src/automation/stage.cpp)
+const GROUP_FOCUS_SHARE: f64 = 0.3;
+
 /// Metres between neighbours when the script has a throw in it
 const THROW_SPACING: f64 = 2.0;
 /// Other staging cameras a scene with warnings is tried on (each costs a
 /// rebuild of a few seconds)
 const MAX_RESTAGINGS: usize = 4;
+
+/// arrange_actors' arguments for a script's blocking (a throw needs room
+/// between people)
+fn blocking_args(script: &script::Script) -> Value {
+    let mut arrange = json!({"layout": script.layout, "frame": 1});
+    if script
+        .lines
+        .iter()
+        .any(|l| matches!(l, script::Line::Throw { .. }))
+    {
+        arrange["spacing"] = json!(THROW_SPACING);
+    }
+    arrange
+}
 
 const INSTRUCTIONS: &str = "Tools for making movies in Microsoft 3D Movie Maker (1995) through its automation \
 bridge. Fastest: script_movie(scenes: [...], export: \"/abs/path.mp4\") builds and exports a whole movie from scene \
@@ -742,12 +760,11 @@ impl ThreeDmmServer {
         )
     }
 
-    /// Builds one scene; with `checkpoint`, saves one first if the movie
-    /// already has scenes. Returns the scene's report.
     /// Builds a scene; if the script leaves the staging camera to the set
     /// and the result has warnings (someone no angle shows, a cut across the
-    /// line...), stages it again on up to MAX_RESTAGINGS other cameras and
-    /// keeps the best build (script::better_build), deleting the others.
+    /// line...) or holds one angle too long, stages it again on up to
+    /// MAX_RESTAGINGS other cameras and keeps the best build
+    /// (script::BuildQuality), deleting the others.
     async fn build_scene_restaged(
         &self,
         script: &script::Script,
@@ -756,20 +773,16 @@ impl ThreeDmmServer {
     ) -> anyhow::Result<Value> {
         let mut best = self.build_scene(script, checkpoint, timeout).await?;
         let mut best_quality = script::build_quality(&best);
-        if script.camera.is_some() || script.camera_style == "none" || best_quality.0 == 0 {
+        if script.camera.is_some() || script.camera_style == "none" || best_quality.is_clean() {
             return Ok(best);
         }
         let first_camera = best["camera"].as_i64();
         let first_quality = best_quality;
-        let state = self.bridge_call("get_state", json!({}), timeout).await?;
-        let camera_count = state["movie"]["scene"]["camera_count"]
-            .as_i64()
-            .unwrap_or(0);
-        for camera in (0..camera_count)
-            .filter(|c| Some(*c) != first_camera)
-            .take(MAX_RESTAGINGS)
-        {
-            if best_quality.0 == 0 && best_quality.1 >= 2 {
+        let candidates = self
+            .rank_staging_cameras(script, first_camera, timeout)
+            .await?;
+        for camera in candidates.into_iter().take(MAX_RESTAGINGS) {
+            if best_quality.is_clean() {
                 break;
             }
             let best_index = best["scene_index"].as_i64().unwrap_or(0);
@@ -786,7 +799,7 @@ impl ThreeDmmServer {
                 continue;
             };
             let quality = script::build_quality(&built);
-            if script::better_build(quality, best_quality) {
+            if quality.better_than(&best_quality) {
                 self.bridge_call("delete_scene", json!({"index": best_index}), timeout)
                     .await?;
                 best = built;
@@ -808,14 +821,16 @@ impl ThreeDmmServer {
                 .await?;
             best["review"] = json!({"verdict": review["verdict"], "issues": review["issues"]});
             let note = format!(
-                "staged on camera {}: the set's own camera ({}) gave {} warning(s) and {} angle(s), this one {} \
-                 and {}",
+                "staged on camera {}: the set's own camera ({}) gave {} warning(s), {} shot(s) held over 10 s \
+                 and {} angle(s); this one {}, {} and {}",
                 best["camera"],
                 first_camera.map_or("?".into(), |c| c.to_string()),
-                first_quality.0,
-                first_quality.1,
-                best_quality.0,
-                best_quality.1
+                first_quality.warnings,
+                first_quality.long_holds,
+                first_quality.angles,
+                best_quality.warnings,
+                best_quality.long_holds,
+                best_quality.angles
             );
             if let Some(notes) = best["notes"].as_array_mut() {
                 notes.push(json!(note));
@@ -824,6 +839,60 @@ impl ThreeDmmServer {
         Ok(best)
     }
 
+    /// The set's cameras other than `exclude`, most promising staging first:
+    /// the cast is blocked for each in a scratch scene (deleted after) and
+    /// ranked by how many of them other cameras show face-on
+    /// (script::staging_promise). Sets with many cameras (the street has 32)
+    /// would otherwise be tried in index order.
+    async fn rank_staging_cameras(
+        &self,
+        script: &script::Script,
+        exclude: Option<i64>,
+        timeout: Duration,
+    ) -> anyhow::Result<Vec<i64>> {
+        let added = self
+            .bridge_call(
+                "add_scene",
+                json!({"background": script.background}),
+                timeout,
+            )
+            .await?;
+        let probe = added["scene_index"].clone();
+        let camera_count = added["movie"]["scene"]["camera_count"]
+            .as_i64()
+            .unwrap_or(0);
+        let mut ranked: Vec<((usize, usize, bool), i64)> = Vec::new();
+        let probed: anyhow::Result<()> = async {
+            for member in &script.cast {
+                self.bridge_call(
+                    "add_actor",
+                    json!({"template": member.actor, "name": member.name}),
+                    timeout,
+                )
+                .await?;
+            }
+            for camera in (0..camera_count).filter(|c| Some(*c) != exclude) {
+                self.bridge_call("set_camera", json!({"camera": camera, "frame": 1}), timeout)
+                    .await?;
+                let arranged = self
+                    .bridge_call("arrange_actors", blocking_args(script), timeout)
+                    .await?;
+                ranked.push((script::staging_promise(&arranged), camera));
+            }
+            Ok(())
+        }
+        .await;
+        // The scratch scene goes whatever happened
+        self.bridge_call("delete_scene", json!({"index": probe}), timeout)
+            .await?;
+        probed?;
+        // Most promising first; ties keep index order
+        ranked.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        Ok(ranked.into_iter().map(|(_, camera)| camera).collect())
+    }
+
+    /// Builds one scene; with `checkpoint`, saves one first if the movie
+    /// already has scenes. Returns the scene's report.
     async fn build_scene(
         &self,
         script: &script::Script,
@@ -892,15 +961,8 @@ impl ThreeDmmServer {
                 member.name, member.actor
             )))?;
         }
-        // A throw needs room between people
-        let mut arrange = json!({"layout": script.layout, "frame": 1});
-        if script
-            .lines
-            .iter()
-            .any(|l| matches!(l, script::Line::Throw { .. }))
-        {
-            arrange["spacing"] = json!(THROW_SPACING);
-        }
+        let arrange = blocking_args(script);
+        let spacing = arrange["spacing"].as_f64().unwrap_or(1.0);
         let arranged = self
             .bridge_call("arrange_actors", arrange, timeout)
             .await
@@ -908,6 +970,15 @@ impl ThreeDmmServer {
         if let Some(framing) = arranged["framing"].as_str() {
             notes.push(format!("blocking: {framing}"));
         }
+        // Where the blocking turns everyone: partners toward a point just in
+        // front of the group (open to the camera), a line to the camera.
+        // Someone who enters later turns the same way on arrival.
+        let group_facing = match (arranged["x"].as_f64(), arranged["z"].as_f64()) {
+            (Some(x), Some(z)) if script.layout == "conversation" => {
+                json!({"x": x, "z": z - GROUP_FOCUS_SHARE * spacing})
+            }
+            _ => json!("camera"),
+        };
 
         // Everyone's place in the blocking (stage x, z), and where the
         // screen edges are, for entrances and exits
@@ -1022,6 +1093,8 @@ impl ThreeDmmServer {
         // The lines, one after another
         let mut frame: i64 = 1;
         let mut played = Vec::new();
+        // Subtitles and the title, added once the cuts are made
+        let mut captions: Vec<(String, Value)> = Vec::new();
         for (i, line) in script.lines.iter().enumerate() {
             match line {
                 script::Line::Say {
@@ -1056,13 +1129,10 @@ impl ThreeDmmServer {
                         // Quick lines are said faster than they are read: the
                         // next line waits until the caption has been up long enough
                         end = end.max(frame + (script::title_seconds(text) * 6.0).ceil() as i64);
-                        self.bridge_call(
-                            "add_text",
+                        captions.push((
+                            format!("lines[{i}] (subtitle)"),
                             json!({"text": text, "kind": "caption", "rect": "bottom", "frame": frame, "until_frame": end, "color": "auto"}),
-                            timeout,
-                        )
-                        .await
-                        .map_err(step(format!("lines[{i}] (subtitle)")))?;
+                        ));
                     }
                     // The listener reacts over the end of the line, as people do
                     // before the next one speaks
@@ -1192,14 +1262,14 @@ impl ThreeDmmServer {
                         .await
                         .map_err(step(format!("lines[{i}] ({who} enters)")))?;
                     on_stage.push(who.clone());
-                    if let Some(other) = nearest(&marks, &on_stage, who) {
+                    if nearest(&marks, &on_stage, who).is_some() {
                         self.bridge_call(
                             "rotate_actor",
-                            json!({"actor": who, "face": other, "frame": end}),
+                            json!({"actor": who, "face": group_facing, "frame": end}),
                             timeout,
                         )
                         .await
-                        .map_err(step(format!("lines[{i}] ({who} turns to {other})")))?;
+                        .map_err(step(format!("lines[{i}] ({who} turns to the group)")))?;
                     }
                     played.push(json!({"line": i, "who": who, "enters": format!("{side:?}").to_lowercase(), "from": frame, "to": end - 1}));
                     frame = end;
@@ -1374,13 +1444,10 @@ impl ThreeDmmServer {
 
         if let Some(title) = &script.title {
             let until = 1 + (script::title_seconds(title) * 6.0).ceil() as i64;
-            self.bridge_call(
-                "add_text",
+            captions.push((
+                "title".into(),
                 json!({"text": title, "kind": "caption", "rect": "top", "frame": 1, "until_frame": until, "color": "auto"}),
-                timeout,
-            )
-            .await
-            .map_err(step("title".into()))?;
+            ));
         }
         let mut shots = Value::Null;
         if script.camera_style != "none" {
@@ -1394,6 +1461,13 @@ impl ThreeDmmServer {
                 .await
                 .map_err(step("auto_camera".into()))?;
             shots = cut["shots"].clone();
+        }
+        // Text goes on last: "auto" picks its colour from the picture under
+        // it, which is only final once the cuts are in
+        for (what, args) in captions {
+            self.bridge_call("add_text", args, timeout)
+                .await
+                .map_err(step(what))?;
         }
         if let Some(transition) = &script.transition {
             self.bridge_call("set_transition", json!({"transition": transition}), timeout)

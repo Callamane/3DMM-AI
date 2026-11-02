@@ -1019,7 +1019,9 @@ pub fn all_tools() -> Vec<ToolSpec> {
              with a cost per cut so it only cuts when the new angle is clearly better and never leaves a shot \
              under min_shot_seconds. style coverage (default) opens wide then goes to singles of whoever speaks \
              (shot / reverse shot); wide keeps everyone in frame. Replaces the scene's existing cuts. Returns the \
-             shot list, with a warning on shots where no angle shows the speaker's face. apply=false previews.",
+             shot list, with a warning on shots where no angle shows the speaker's face, the speaker is too small \
+             to read (coverage) or the cut crosses the line. It keeps to the 180-degree rule and never jump-cuts \
+             between cameras that film the same view (sets where only the backdrop changes). apply=false previews.",
             obj(
                 json!({
                     "scene": {"type": "integer", "minimum": 0, "description": "Default: the current scene."},

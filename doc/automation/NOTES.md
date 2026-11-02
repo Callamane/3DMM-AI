@@ -676,6 +676,51 @@ on the way:
     characters keeping their sides, 0 warnings, 9.5 s instead of 3.7 s.
     Scenes with no warnings cost nothing extra. Covered by an integration
     test.
+  * A quality benchmark (tools/3dmm-mcp/tests/quality_bench.rs, ignored by
+    default): a two-person argument and a three-person scene with an
+    entrance and exit, scripted on all 12 stock sets. It scores warnings
+    (review and shot list), angles cut between, and the longest single
+    shot. The first run had 23 of 24 scenes clean, but six held one angle
+    for the whole 15 s. What it led to:
+    * Restaging also counts a shot held over 10 s as a defect (after
+      warnings, before angles: script::BuildQuality). That fixed all six,
+      but on the street it chose a crane shot where Ann was a few pixels
+      tall. So coverage-style auto_camera now warns when a speaker is under
+      30% of the frame height, and the street restages on a medium
+      two-shot by the kiosk with an over-the-shoulder reverse. At a fifth,
+      the cave restaged onto a far shot where Bob's face was about 15 px;
+      at 30% it keeps its one readable two-shot instead.
+    * Restaging tried the next four cameras by index, which on the street
+      (32 cameras) never reached the good ones (20, 23, 29). Before
+      rebuilding, script_scene now blocks the cast for every camera in a
+      scratch scene (deleted after) and ranks the cameras by how many
+      characters other cameras see face-on (arrange_actors' other_angles,
+      script::staging_promise). The four best get full rebuilds. The street
+      trio went from one 17 s shot to three angles on camera 23 in 12 s.
+      A blocking that doesn't fit its own camera still counts its angles
+      (the staging camera often isn't cut to). Coverage also skips cameras
+      that film the same view as the main one: the cave's cameras 3 and 4
+      are twins and had counted as each other's second angle.
+    * GE-Black's cameras are one view with different backdrops (black,
+      white, clouds), and cutting between them is a jump cut. auto_camera
+      finds cameras within 1 m of each other and aimed within 20 degrees
+      (FSameView, unit tested), and a cut between them costs 3.
+    * Subtitles and titles were added as each line was laid out, so their
+      "auto" colour was judged against the staging camera. After a cut to
+      the white backdrop, yellow subtitles were unreadable. They are now
+      added after auto_camera.
+    * An entrance turned squarely to the nearest character, its back to a
+      frontal camera. It now turns to arrange_actors' group focus, like
+      the others (a line layout faces the camera).
+    * macOS `say` stalled once at 0% CPU for over nine minutes, and the
+      server waited forever. Synthesis (and the ffmpeg pitch shift) now
+      runs with a 30 s limit, is killed and retried once, then fails
+      saying so (run_with_timeout, unit tested with a stalled process).
+    * Result: 24 of 24 scenes with no warnings (from 23), 2.04 angles per
+      scene (from 2.12, but no longer counting backdrop swaps and far shots
+      as angles), no shot over 10 s except where holding is right (the
+      black set's one view and the cave dialogue, listed in the test with
+      reasons; from six 15 s holds), built in about 2.5 minutes.
   * Speech vs effects: `ACTR::FSoundInFrm(sty)` can count one sound type.
     review_movie and auto_camera's own beats treat only speech as someone
     speaking. A `hit_sound` attached to the target of a throw had made the
