@@ -348,6 +348,39 @@ async fn script_scene_builds_a_reviewed_scene() -> Result<()> {
         );
     }
 
+    // A set whose own camera can't cover the exchange without crossing the
+    // line (the airplane): the scene is restaged until no warnings are left
+    c.tool("new_movie", json!({"discard_changes": true}))
+        .await?;
+    let flight = c
+        .tool(
+            "script_scene",
+            json!({"background": "AD-Airplane", "preview": false, "cast": cast, "lines": [
+                {"who": "Bob", "says": "I have never flown before."},
+                {"who": "Ann", "says": "You'll love it. Just don't look down."},
+                {"who": "Bob", "says": "Why would I look down?"},
+                {"who": "Ann", "says": "No reason. Have a peanut."}]}),
+        )
+        .await?;
+    let shot_warnings = flight["shots"]
+        .as_array()
+        .context("shots")?
+        .iter()
+        .filter(|s| s.get("warning").is_some())
+        .count();
+    let review_warnings = flight["review"]["issues"]
+        .as_array()
+        .context("issues")?
+        .iter()
+        .filter(|i| i["severity"] == "warning")
+        .count();
+    ensure!(shot_warnings + review_warnings == 0, "{flight}");
+    let state = c.tool("get_state", json!({})).await?;
+    ensure!(
+        state["movie"]["scene_count"] == 1,
+        "the other stagings were removed: {state}"
+    );
+
     c.tool("quit", json!({"discard_changes": true})).await.ok();
     Ok(())
 }

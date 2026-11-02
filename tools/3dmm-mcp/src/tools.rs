@@ -87,7 +87,7 @@ fn frame_prop() -> Value {
 fn scene_script_properties() -> Value {
     json!({
         "background": {"type": "string", "description": "Set name or a word from its description (\"diner\", \"haunted\")."},
-        "camera": {"type": "integer", "minimum": 0, "description": "Starting camera (auto_camera re-cuts anyway)."},
+        "camera": {"type": "integer", "minimum": 0, "description": "The camera the scene is staged for (left and right, blocking); auto_camera re-cuts anyway. Left out, the set's own camera is used, and if that leaves warnings the scene is restaged on up to 4 other cameras and the cleanest build kept (a note says which)."},
         "title": {"type": "string", "description": "Caption at the top for as long as it takes to read."},
         "cast": {
             "type": "array",

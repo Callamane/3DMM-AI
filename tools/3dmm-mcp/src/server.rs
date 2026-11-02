@@ -46,6 +46,9 @@ const REACTION_SECONDS: f64 = 1.5;
 
 /// Metres between neighbours when the script has a throw in it
 const THROW_SPACING: f64 = 2.0;
+/// Other staging cameras a scene with warnings is tried on (each costs a
+/// rebuild of a few seconds)
+const MAX_RESTAGINGS: usize = 4;
 
 const INSTRUCTIONS: &str = "Tools for making movies in Microsoft 3D Movie Maker (1995) through its automation \
 bridge. Fastest: script_movie(scenes: [...], export: \"/abs/path.mp4\") builds and exports a whole movie from scene \
@@ -494,7 +497,7 @@ impl ThreeDmmServer {
                 );
             }
         }
-        let mut result = self.build_scene(&script, true, timeout).await.map_err(|err| {
+        let mut result = self.build_scene_restaged(&script, true, timeout).await.map_err(|err| {
             anyhow::anyhow!(
                 "{}. The new scene may be partly built as the movie's last scene: delete_scene removes it, or \
                  restore_checkpoint(\"before script_scene\") goes back (when the movie had scenes before)",
@@ -596,7 +599,7 @@ impl ThreeDmmServer {
         }
         for (i, script) in scripts.iter().enumerate() {
             let built = self
-                .build_scene(script, false, timeout)
+                .build_scene_restaged(script, false, timeout)
                 .await
                 .map_err(|err| {
                     anyhow::anyhow!(
@@ -741,6 +744,86 @@ impl ThreeDmmServer {
 
     /// Builds one scene; with `checkpoint`, saves one first if the movie
     /// already has scenes. Returns the scene's report.
+    /// Builds a scene; if the script leaves the staging camera to the set
+    /// and the result has warnings (someone no angle shows, a cut across the
+    /// line...), stages it again on up to MAX_RESTAGINGS other cameras and
+    /// keeps the best build (script::better_build), deleting the others.
+    async fn build_scene_restaged(
+        &self,
+        script: &script::Script,
+        checkpoint: bool,
+        timeout: Duration,
+    ) -> anyhow::Result<Value> {
+        let mut best = self.build_scene(script, checkpoint, timeout).await?;
+        let mut best_quality = script::build_quality(&best);
+        if script.camera.is_some() || script.camera_style == "none" || best_quality.0 == 0 {
+            return Ok(best);
+        }
+        let first_camera = best["camera"].as_i64();
+        let first_quality = best_quality;
+        let state = self.bridge_call("get_state", json!({}), timeout).await?;
+        let camera_count = state["movie"]["scene"]["camera_count"]
+            .as_i64()
+            .unwrap_or(0);
+        for camera in (0..camera_count)
+            .filter(|c| Some(*c) != first_camera)
+            .take(MAX_RESTAGINGS)
+        {
+            if best_quality.0 == 0 && best_quality.1 >= 2 {
+                break;
+            }
+            let best_index = best["scene_index"].as_i64().unwrap_or(0);
+            let mut restaged = script.clone();
+            restaged.camera = Some(camera);
+            let Ok(built) = self.build_scene(&restaged, false, timeout).await else {
+                // Drop whatever part of it was built after the best one
+                let state = self.bridge_call("get_state", json!({}), timeout).await?;
+                let count = state["movie"]["scene_count"].as_i64().unwrap_or(0);
+                if count > best_index + 1 {
+                    self.bridge_call("delete_scene", json!({"index": count - 1}), timeout)
+                        .await?;
+                }
+                continue;
+            };
+            let quality = script::build_quality(&built);
+            if script::better_build(quality, best_quality) {
+                self.bridge_call("delete_scene", json!({"index": best_index}), timeout)
+                    .await?;
+                best = built;
+                best["scene_index"] = json!(best_index);
+                best_quality = quality;
+            } else {
+                let index = built["scene_index"].as_i64().unwrap_or(best_index + 1);
+                self.bridge_call("delete_scene", json!({"index": index}), timeout)
+                    .await?;
+            }
+        }
+        if best["camera"].as_i64() != first_camera {
+            // Deleting the others moved it: review it where it is now
+            let index = best["scene_index"].clone();
+            self.bridge_call("select_scene", json!({"index": index}), timeout)
+                .await?;
+            let review = self
+                .bridge_call("review_movie", json!({"scene": index}), timeout)
+                .await?;
+            best["review"] = json!({"verdict": review["verdict"], "issues": review["issues"]});
+            let note = format!(
+                "staged on camera {}: the set's own camera ({}) gave {} warning(s) and {} angle(s), this one {} \
+                 and {}",
+                best["camera"],
+                first_camera.map_or("?".into(), |c| c.to_string()),
+                first_quality.0,
+                first_quality.1,
+                best_quality.0,
+                best_quality.1
+            );
+            if let Some(notes) = best["notes"].as_array_mut() {
+                notes.push(json!(note));
+            }
+        }
+        Ok(best)
+    }
+
     async fn build_scene(
         &self,
         script: &script::Script,
@@ -1329,6 +1412,7 @@ impl ThreeDmmServer {
             .collect();
         let result = json!({
             "scene_index": scene_index,
+            "camera": scene["movie"]["scene"]["camera"],
             "frames": frame - 1,
             "seconds": ((frame - 1) as f64 / 6.0 * 10.0).round() / 10.0,
             "cast": cast,

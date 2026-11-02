@@ -664,6 +664,18 @@ on the way:
     auto_camera pick oversized close-ups that review_movie then flagged, so
     the two keep one definition of cut off. script_movie's warning total
     now includes shot warnings.
+  * Restaging: when a script leaves the staging camera to the set and the
+    build has warnings (review or shot list), script_scene / script_movie
+    build it again on up to 4 other cameras (MAX_RESTAGINGS). They keep the
+    build with the fewest warnings, then the most angles up to three
+    (script::build_quality / better_build, unit tested), delete the rest
+    and re-review the one kept at its final index. It stops early at a
+    clean build that cuts between two or more angles. The airplane
+    exchange (2 crossed cuts on the set's camera 0) restaged on camera 2: a
+    two-shot and an over-the-shoulder reverse on camera 8 with both
+    characters keeping their sides, 0 warnings, 9.5 s instead of 3.7 s.
+    Scenes with no warnings cost nothing extra. Covered by an integration
+    test.
   * Speech vs effects: `ACTR::FSoundInFrm(sty)` can count one sound type.
     review_movie and auto_camera's own beats treat only speech as someone
     speaking. A `hit_sound` attached to the target of a throw had made the

@@ -926,6 +926,27 @@ pub fn camera_beats(played: &[Value], staging_camera: Option<i64>) -> Vec<Value>
     beats
 }
 
+/// How good a built scene is, for choosing between stagings: its warnings
+/// (the review's and the shot list's), then how many camera angles it cuts
+/// between (up to three; a scene that can only hold one shot looks static)
+pub fn build_quality(built: &Value) -> (usize, usize) {
+    let review = built["review"]["issues"].as_array().map_or(0, |issues| {
+        issues.iter().filter(|i| i["severity"] == "warning").count()
+    });
+    let shots = built["shots"].as_array().cloned().unwrap_or_default();
+    let shot_warnings = shots.iter().filter(|s| s.get("warning").is_some()).count();
+    let mut cameras: Vec<i64> = shots.iter().filter_map(|s| s["camera"].as_i64()).collect();
+    cameras.sort_unstable();
+    cameras.dedup();
+    (review + shot_warnings, cameras.len().min(3))
+}
+
+/// Whether a build of quality `a` beats one of quality `b`: fewer warnings,
+/// then more angles
+pub fn better_build(a: (usize, usize), b: (usize, usize)) -> bool {
+    a.0 < b.0 || (a.0 == b.0 && a.1 > b.1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1387,5 +1408,19 @@ mod tests {
             camera_beats(&played[..1], None),
             vec![json!({"frame": 1, "actor": null})]
         );
+    }
+
+    #[test]
+    fn builds_compare_by_warnings_then_angles() {
+        let built = json!({
+            "review": {"issues": [{"severity": "warning"}, {"severity": "info"}]},
+            "shots": [{"camera": 3}, {"camera": 1, "warning": "across the line"}, {"camera": 3}]
+        });
+        assert_eq!(build_quality(&built), (2, 2));
+        let clean_static = json!({"review": {"issues": []}, "shots": [{"camera": 1}]});
+        assert_eq!(build_quality(&clean_static), (0, 1));
+        assert!(better_build((0, 1), (2, 2)), "fewer warnings first");
+        assert!(better_build((0, 2), (0, 1)), "then more angles");
+        assert!(!better_build((0, 2), (0, 2)), "a tie keeps the first");
     }
 }
