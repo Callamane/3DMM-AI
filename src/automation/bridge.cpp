@@ -196,7 +196,6 @@ static void _ProcessLine(const std::string &strLine)
     std::string strError;
     Json jsonReq;
     Request *preq = new Request();
-    preq->tsStart = TsCurrent();
 
     if (strLine.find_first_not_of(" \t\r") == std::string::npos)
     {

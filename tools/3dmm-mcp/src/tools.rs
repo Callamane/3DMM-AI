@@ -703,6 +703,34 @@ pub fn all_tools() -> Vec<ToolSpec> {
                 &[],
             ),
         ),
+        spec(
+            "storyboard",
+            Kind::BridgeImage("storyboard"),
+            "See a whole scene at once: frames sampled evenly across it (default 12) on one image, each \
+             labelled with its frame number and time. The quickest way to review a scene you built.",
+            obj(
+                json!({
+                    "scene": {"type": "integer", "minimum": 0, "description": "Default: the current scene."},
+                    "count": {"type": "integer", "minimum": 2, "maximum": 24, "default": 12},
+                    "from": {"type": "integer", "minimum": 1},
+                    "to": {"type": "integer", "minimum": 1}
+                }),
+                &[],
+            ),
+        ),
+        bridge(
+            "suggest_camera",
+            "Rank this background's cameras by how well they show the actors at a frame: how many are fully in \
+             shot, how large they appear, how centred the group is. It can't see furniture blocking the view, \
+             so confirm the pick with render_frame. Apply it with set_camera.",
+            obj(
+                json!({
+                    "actors": {"type": "array", "items": {"type": ["integer", "string"]}, "description": "Actors to frame (default: everyone on stage)."},
+                    "frame": frame_prop()
+                }),
+                &[],
+            ),
+        ),
         bridge(
             "describe_timeline",
             "Summarise what happens when in a scene: camera changes, each actor's segments (frames, action, \
@@ -790,9 +818,8 @@ pub fn all_tools() -> Vec<ToolSpec> {
         match tool.name {
             "play" => tool.timeout_secs = 15 * 60,
             "export_frames" | "export_video" => tool.timeout_secs = 20 * 60,
-            "goto_studio" | "launch" | "preview_cameras" | "describe_timeline" => {
-                tool.timeout_secs = 120
-            }
+            "goto_studio" | "launch" | "preview_cameras" | "describe_timeline" | "storyboard"
+            | "suggest_camera" => tool.timeout_secs = 120,
             _ => {}
         }
     }
@@ -813,7 +840,7 @@ pub const WORKFLOW_GUIDE: &str = r#"# Making a movie with 3D Movie Maker
    - `animate(actor, action, seconds)` does an action on the spot (laugh, dance, think) and extends the scene.
    - Actors return to their rest pose afterwards (`then: "freeze"` to hold the last pose).
 7. **Camera and text** — `set_camera(camera, frame)` cuts within a scene. `add_text(text, kind: "caption", rect: "top"|"bottom"|"center", frame, until_frame, size, color)` for titles and subtitles.
-8. **Check** — `describe_timeline` summarises who does what when (cameras, actions, movement, text, sounds). `render_frame(frame)` shows a frame. `get_state(all_scenes: true)` gives every scene's length and the total.
+8. **Check** — `storyboard` shows a whole scene on one image; `suggest_camera` ranks angles for the actors in shot; `describe_timeline` summarises who does what when (cameras, actions, movement, text, sounds). `render_frame(frame)` shows a frame. `get_state(all_scenes: true)` gives every scene's length and the total.
 9. **More scenes** — `add_scene` again (actors belong to one scene; add them again); `set_transition("dissolve")` on the earlier scene.
 10. **Save and share** — `save_movie(path: ".../name.3mm")` keeps an editable movie; `export_video(path: ".../name.mp4")` makes a video with sound that plays anywhere. `play(from_start: true, wait: true)` shows it in the app.
 

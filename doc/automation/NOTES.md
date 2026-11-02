@@ -451,6 +451,16 @@ on the way:
   `FApplyChp`); `remove_text` is `SCEN::FRemTbox`; `remove_sound` is
   `SCEN::FRemSnd` or `ACTR::FDeleteSndCore` wrapped in an actor undo.
 
+* `storyboard` samples a scene's frames evenly onto one labelled contact
+  sheet; `suggest_camera` switches the background through its cameras
+  (`BKGD::FSetCamera`, no scene events), renders the world each time so
+  `BODY` screen bounds are current, and ranks cameras by actors fully in
+  shot, then by on-screen size near half the frame height, then centring.
+  It can't detect occlusion by set pieces.
+* Request timeouts (`play` with `wait`, `goto_studio`) use
+  `std::chrono::steady_clock` instead of the app's scalable `TsCurrent()`
+  clock, after one release run reported a 60 s playback timeout 14 s in.
+
 ## 13. Decisions
 
 * **Polling, not threads.** Non-blocking sockets serviced from

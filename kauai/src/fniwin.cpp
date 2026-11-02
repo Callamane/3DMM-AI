@@ -260,7 +260,9 @@ bool FNI::FGetUnique(FTG ftg)
         GetLeaf(&stnOld);
 
     sw = (int16_t)TsCurrentSystem() + ++_dsw;
-    for (cact = 20; cact != 0; cact--, sw += ++_dsw)
+    // Enough attempts to get past files left behind by runs that didn't exit
+    // cleanly (the seed is similar from run to run)
+    for (cact = 2000; cact != 0; cact--, sw += ++_dsw)
     {
         stn.FFormatSz(PszLit("Temp%04x"), (int32_t)sw);
         if (stn.FEqual(&stnOld))

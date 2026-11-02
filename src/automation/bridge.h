@@ -6,6 +6,7 @@
 
 #include "studio.h"
 
+#include <chrono>
 #include <functional>
 #include <string>
 #include <vector>
@@ -41,7 +42,15 @@ struct Request
     std::string errCode;
     std::string errMessage;
     std::function<bool(Request &)> poll;
-    uint32_t tsStart = 0;
+    // When the request arrived. A steady clock, not the app's TsCurrent(),
+    // which can be rescaled.
+    std::chrono::steady_clock::time_point tpStart = std::chrono::steady_clock::now();
+
+    uint32_t MsElapsed() const
+    {
+        return static_cast<uint32_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - tpStart).count());
+    }
 
     bool Fail(const char *pszCode, const std::string &strMessage)
     {

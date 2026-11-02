@@ -57,6 +57,8 @@ const BRIDGE_COMMANDS: &[&str] = &[
     "list_checkpoints",
     "export_frames",
     "export_media",
+    "storyboard",
+    "suggest_camera",
     "move_scene",
     "duplicate_scene",
     "import_scenes",

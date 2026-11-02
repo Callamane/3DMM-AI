@@ -205,7 +205,10 @@ bool FNI::FGetUnique(FTG ftg)
         GetLeaf(&stnOld);
 
     sw = (short)TsCurrentSystem() + ++_dsw;
-    for (cact = 20; cact != 0; cact--, sw += ++_dsw)
+    // TsCurrentSystem() is close to the same value early in every run, so
+    // processes try the same names; allow enough attempts to get past
+    // files left behind by runs that didn't exit cleanly.
+    for (cact = 2000; cact != 0; cact--, sw += ++_dsw)
     {
         stn.FFormatSz(PszLit("Temp%04x"), (long)sw);
         if (stn.FEqual(&stnOld))

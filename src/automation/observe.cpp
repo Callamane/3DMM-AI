@@ -4,6 +4,7 @@
 ***************************************************************************/
 #include "bridge.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -401,6 +402,223 @@ static bool _FCmdPreviewCameras(Request &req)
     req.result.Set("columns", kcColumnsPreview);
     req.result.Set("cells", jsonCells);
     req.result.Set("note", "each cell is labelled CAM n; pass that number to add_scene or set_camera");
+    return fTrue;
+}
+
+/***************************************************************************
+    Storyboard: frames sampled across a scene on one labelled image
+***************************************************************************/
+const int32_t kcStoryboardMax = 24;
+
+static bool _FCmdStoryboard(Request &req)
+{
+    PMVIE pmvie;
+    PSCEN pscen;
+    std::string strPath;
+    int32_t cframe = 12;
+    static int32_t _cStoryboard = 0;
+
+    if (!FRequireScene(req, &pmvie, &pscen) || !FRequireNotPlaying(req, pmvie))
+        return fFalse;
+    if (!req.FArgInt("count", &cframe, fFalse) || !req.FArgString("path", &strPath, fFalse))
+        return fFalse;
+    cframe = LwBound(cframe, 2, kcStoryboardMax + 1);
+
+    int32_t iscenRestore = pmvie->Iscen();
+    if (req.FHasArg("scene"))
+    {
+        int32_t iscen;
+        if (!req.FArgInt("scene", &iscen))
+            return fFalse;
+        if (iscen < 0 || iscen >= pmvie->Cscen())
+            return req.Fail(kszErrBadArgs, "scene " + std::to_string(iscen) + " does not exist");
+        if (iscen != pmvie->Iscen() && !pmvie->FSwitchScen(iscen))
+            return FFailEngine(req, "could not switch to scene " + std::to_string(iscen));
+        pscen = pmvie->Pscen();
+    }
+    int32_t nfrmRestore = pscen->Nfrm();
+    int32_t nfrmFrom = pscen->NfrmFirst(), nfrmTo = pscen->NfrmLast();
+    if (!req.FArgInt("from", &nfrmFrom, fFalse) || !req.FArgInt("to", &nfrmTo, fFalse))
+        return fFalse;
+    nfrmFrom = LwMax(nfrmFrom, pscen->NfrmFirst());
+    nfrmTo = LwMin(nfrmTo, pscen->NfrmLast());
+    if (nfrmTo < nfrmFrom)
+        return req.Fail(kszErrBadArgs, "empty frame range");
+    cframe = LwMin(cframe, nfrmTo - nfrmFrom + 1);
+
+    std::vector<PngColor> palette = _PaletteCur();
+    uint8_t bText = BNearestColor(palette, 255, 240, 0);
+    uint8_t bOutline = BNearestColor(palette, 0, 0, 0);
+    Image8 imgSheet;
+    Json jsonFrames = Json::MakeArray();
+    for (int32_t i = 0; i < cframe && !req.Failed(); i++)
+    {
+        int32_t nfrm = cframe == 1 ? nfrmFrom : nfrmFrom + LwMulDiv(nfrmTo - nfrmFrom, i, cframe - 1);
+        Image8 img;
+        if (!pscen->FGotoFrm(nfrm))
+        {
+            FFailEngine(req, "could not go to frame " + std::to_string(nfrm));
+            break;
+        }
+        if (!_FCaptureView(req, &img))
+            break;
+        Image8 imgSmall = Downscale2x(img);
+        if (imgSheet.width == 0)
+        {
+            int32_t crow = (cframe + kcColumnsPreview - 1) / kcColumnsPreview;
+            int32_t ccol = LwMin(kcColumnsPreview, cframe);
+            imgSheet = Image8(ccol * imgSmall.width + (ccol - 1) * kdzpGapPreview,
+                              crow * imgSmall.height + (crow - 1) * kdzpGapPreview, bOutline);
+        }
+        char rgch[40];
+        snprintf(rgch, sizeof(rgch), "F%d  %.1fS", nfrm, static_cast<double>(nfrm - pscen->NfrmFirst()) / kfps);
+        DrawText(&imgSmall, 4, 4, rgch, bText, bOutline, 2);
+        int32_t col = i % kcColumnsPreview, row = i / kcColumnsPreview;
+        Blit(&imgSheet, imgSmall, col * (imgSmall.width + kdzpGapPreview), row * (imgSmall.height + kdzpGapPreview));
+        jsonFrames.Push(nfrm);
+    }
+
+    pscen->FGotoFrm(nfrmRestore);
+    if (iscenRestore != pmvie->Iscen())
+        pmvie->FSwitchScen(iscenRestore);
+    RefreshViews(pmvie);
+    if (req.Failed())
+        return fFalse;
+
+    if (strPath.empty())
+        strPath = _StrJoin(_StrDefaultCaptureDir(), "3dmm-storyboard-" + std::to_string(++_cStoryboard) + ".png");
+    if (!_FWriteImage(req, strPath, imgSheet, palette))
+        return fFalse;
+    req.result.Set("path", strPath);
+    req.result.Set("frames", jsonFrames);
+    req.result.Set("columns", kcColumnsPreview);
+    req.result.Set("note", "cells are labelled with the frame number and seconds into the scene");
+    return fTrue;
+}
+
+/***************************************************************************
+    Camera suggestions: which of the set's cameras show the actors best
+***************************************************************************/
+static bool _FCmdSuggestCamera(Request &req)
+{
+    PMVIE pmvie;
+    PSCEN pscen;
+
+    if (!FRequireScene(req, &pmvie, &pscen) || !FRequireNotPlaying(req, pmvie) || !FApplyFrameArg(req, pscen))
+        return fFalse;
+
+    // Which actors to frame: the listed ones, or everyone on stage
+    std::vector<PACTR> vecActors;
+    const Json &jsonActors = req.args.Get("actors");
+    if (jsonActors.IsArray() && jsonActors.Size() > 0)
+    {
+        for (const Json &json : jsonActors.AsArray())
+        {
+            Request reqT;
+            reqT.args.Set("actor", json);
+            PACTR pactr;
+            if (!FResolveActor(reqT, "actor", &pactr))
+                return req.Fail(reqT.errCode.c_str(), reqT.errMessage);
+            vecActors.push_back(pactr);
+        }
+    }
+    else
+    {
+        PGL pglpactr = pscen->PglRollCall();
+        for (int32_t ipactr = 0; pglpactr != pvNil && ipactr < pglpactr->IvMac(); ipactr++)
+        {
+            PACTR pactr;
+            pglpactr->Get(ipactr, &pactr);
+            if (pactr->FOnStage())
+                vecActors.push_back(pactr);
+        }
+    }
+    if (vecActors.empty())
+        return req.Fail(kszErrBadState, "no actors on stage at this frame to frame");
+
+    PBKGD pbkgd = pscen->Pbkgd();
+    int32_t icamRestore = pbkgd->Icam();
+    RC rcView(0, 0, 544, 306);
+    if (PmvuCur() != pvNil)
+        PmvuCur()->GetRc(&rcView, cooLocal);
+    struct Rating
+    {
+        int32_t icam;
+        int32_t cin;
+        double dyAverage;
+        double dxCentre;
+        Json jsonActors;
+    };
+    std::vector<Rating> vecRatings;
+    for (int32_t icam = 0; icam < pbkgd->Ccam(); icam++)
+    {
+        if (!pbkgd->FSetCamera(pmvie->Pbwld(), icam))
+            continue;
+        EnsureRendered(pmvie);
+        Rating rating{icam, 0, 0, 0, Json::MakeArray()};
+        double dxSum = 0;
+        for (PACTR pactr : vecActors)
+        {
+            STN stn;
+            RC rc;
+            bool fIn = pactr->FOnStage() && pactr->FIsInView();
+            Json json = Json::MakeObject();
+            json.Set("id", pactr->Arid());
+            if (pmvie->FGetName(pactr->Arid(), &stn))
+                json.Set("name", StrFromStn(&stn));
+            json.Set("in_view", fIn);
+            if (fIn)
+            {
+                pactr->GetRcBounds(&rc);
+                // Partly off screen counts as out of shot
+                bool fWhole = rc.xpLeft > 0 && rc.xpRight < rcView.Dxp() && rc.ypTop > 0 && rc.ypBottom < rcView.Dyp();
+                json.Set("fully_in_shot", fWhole);
+                json.Set("screen_height", rc.Dyp());
+                if (fWhole)
+                {
+                    rating.cin++;
+                    rating.dyAverage += rc.Dyp();
+                    dxSum += (rc.xpLeft + rc.xpRight) / 2.0;
+                }
+            }
+            rating.jsonActors.Push(json);
+        }
+        if (rating.cin > 0)
+        {
+            rating.dyAverage /= rating.cin;
+            rating.dxCentre = std::fabs(dxSum / rating.cin - rcView.Dxp() / 2.0);
+        }
+        vecRatings.push_back(rating);
+    }
+    pbkgd->FSetCamera(pmvie->Pbwld(), icamRestore);
+    RefreshViews(pmvie);
+
+    // Most actors fully in shot first; then actors that fill the frame well
+    // (around half the frame height), then the best-centred group
+    std::sort(vecRatings.begin(), vecRatings.end(), [](const Rating &a, const Rating &b) {
+        if (a.cin != b.cin)
+            return a.cin > b.cin;
+        // About half the frame height reads well for a group
+        double da = std::fabs(a.dyAverage - 150), db = std::fabs(b.dyAverage - 150);
+        if (std::fabs(da - db) > 10)
+            return da < db;
+        return a.dxCentre < b.dxCentre;
+    });
+    Json jsonList = Json::MakeArray();
+    for (const Rating &rating : vecRatings)
+    {
+        Json json = Json::MakeObject();
+        json.Set("camera", rating.icam);
+        json.Set("actors_fully_in_shot", rating.cin);
+        json.Set("average_screen_height", static_cast<int>(rating.dyAverage));
+        json.Set("actors", rating.jsonActors);
+        jsonList.Push(json);
+    }
+    req.result.Set("frame", pscen->Nfrm());
+    req.result.Set("actors_considered", static_cast<int>(vecActors.size()));
+    req.result.Set("cameras", jsonList);
+    req.result.Set("note", "ranked best first; doesn't know about furniture blocking the view, so check the pick with "
+                           "render_frame or preview_cameras. Apply with set_camera.");
     return fTrue;
 }
 
@@ -878,11 +1096,11 @@ static bool _FPollPlaying(Request &req)
     double dSecMax = 120;
     if (req.args.Get("timeout_seconds").IsNumber())
         dSecMax = req.args.Get("timeout_seconds").AsNumber();
-    if (TsCurrent() - req.tsStart > LwMin(static_cast<int32_t>(dSecMax * kdtsSecond), kdtsPlayTimeoutMax))
+    if (req.MsElapsed() > LwMin(static_cast<int32_t>(dSecMax * kdtsSecond), kdtsPlayTimeoutMax))
     {
         pmvie->Play(); // stop
         req.result.Set("finished", false);
-        req.result.Set("note", "stopped after the timeout");
+        req.result.Set("note", "stopped after the timeout (" + std::to_string(req.MsElapsed() / 1000) + " s)");
         return fTrue;
     }
     return fFalse;
@@ -936,7 +1154,7 @@ static bool _FCmdPlay(Request &req)
         // Give the queued cidPlay a chance to start before polling
         req.poll = [](Request &req) {
             PMVIE pmvie = PmvieCur();
-            if (pmvie != pvNil && !pmvie->FPlaying() && TsCurrent() - req.tsStart < kdtsSecond)
+            if (pmvie != pvNil && !pmvie->FPlaying() && req.MsElapsed() < kdtsSecond)
                 return false;
             return _FPollPlaying(req);
         };
@@ -961,6 +1179,8 @@ const CommandInfo krgcmdObserve[] = {
     {"render_frame", _FCmdRenderFrame, fTrue},
     {"preview_cameras", _FCmdPreviewCameras, fTrue},
     {"describe_timeline", _FCmdDescribeTimeline, fTrue},
+    {"storyboard", _FCmdStoryboard, fTrue},
+    {"suggest_camera", _FCmdSuggestCamera, fTrue},
     {"export_frames", _FCmdExportFrames, fTrue},
     {"play", _FCmdPlay, fTrue},
     {"stop", _FCmdStop, fTrue},

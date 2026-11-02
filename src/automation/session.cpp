@@ -202,7 +202,7 @@ static bool _FPollStudioOpen(Request &req)
         req.result.Set("screen", "studio");
         return fTrue;
     }
-    if (TsCurrent() - req.tsStart > kdtsStudioTimeout)
+    if (req.MsElapsed() > kdtsStudioTimeout)
     {
         req.Fail(kszErrBadState, "timed out waiting for the Studio to open");
         return fTrue;
