@@ -617,6 +617,24 @@ static bool _FCmdSuggestCamera(Request &req)
     req.result.Set("frame", pscen->Nfrm());
     req.result.Set("actors_considered", static_cast<int>(vecActors.size()));
     req.result.Set("cameras", jsonList);
+    // Framing advice for the best camera
+    if (!vecRatings.empty() && vecRatings[0].cin > 0)
+    {
+        const Rating &best = vecRatings[0];
+        int32_t dypView = rcView.Dyp();
+        if (best.dyAverage < dypView / 3)
+        {
+            req.result.Set("framing", "even on the best camera the actors look small (about " +
+                                          std::to_string(static_cast<int>(best.dyAverage)) + " of " +
+                                          std::to_string(dypView) +
+                                          " px tall); move them closer to the camera (lower z) with place_actor");
+        }
+        else if (best.dyAverage > dypView * 4 / 5)
+        {
+            req.result.Set("framing", "the actors nearly fill the frame; move them further away (higher z) for a "
+                                      "wider shot");
+        }
+    }
     req.result.Set("note", "ranked best first; doesn't know about furniture blocking the view, so check the pick with "
                            "render_frame or preview_cameras. Apply with set_camera.");
     return fTrue;
