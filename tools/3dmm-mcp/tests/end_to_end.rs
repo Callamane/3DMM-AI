@@ -383,6 +383,32 @@ async fn builds_saves_and_reopens_a_two_scene_movie() -> Result<()> {
         "the left partner turns toward the right one: {ann}"
     );
 
+    // ---- Physics: a ball thrown at Bob arcs, hits him, bounces and settles
+    s.call(
+        "add_actor",
+        json!({"template": "Sphere", "name": "Ball", "position": {"x": -2.5, "z": 1.0}}),
+    )
+    .await?;
+    let thrown = s
+        .call(
+            "physics",
+            json!({"actor": "Ball", "to": "Bob", "spin": "tumble"}),
+        )
+        .await?;
+    let impacts = thrown["impacts"].as_array().context("impacts")?;
+    ensure!(!impacts.is_empty(), "{thrown}");
+    ensure!(
+        thrown["end_frame"].as_i64() > thrown["start_frame"].as_i64(),
+        "{thrown}"
+    );
+    let review = s.call("review_movie", json!({"scene": 3})).await?;
+    for issue in review["issues"].as_array().context("issues")? {
+        ensure!(
+            issue["kind"] != "collision",
+            "physics left bodies inside each other: {issue}"
+        );
+    }
+
     println!("movie: {}", movie.display());
     s.call("quit", json!({"discard_changes": true})).await?;
     Ok(())

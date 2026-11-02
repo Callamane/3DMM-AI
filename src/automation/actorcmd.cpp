@@ -6,6 +6,7 @@
     hand-recorded path. See NOTES.md section 6.
 ***************************************************************************/
 #include "bridge.h"
+#include "physics.h"
 
 #include <cmath>
 
@@ -680,16 +681,63 @@ static bool _FCmdMoveActor(Request &req)
 
     int32_t nfrmStart = pscen->Nfrm();
     Vec3 start = _XyzWorld(pactr);
+
+    // Walk around anyone standing in the way (where they are now)
+    bool fAvoid = fTrue;
+    if (!req.FArgBool("avoid_actors", &fAvoid, fFalse))
+        return fFalse;
+    std::vector<RouteStep> vecSteps;
+    if (fAvoid)
+    {
+        EnsureRendered(pmvie);
+        std::vector<Obstacle> vecObstacles;
+        PGL pglpactr = pscen->PglRollCall();
+        for (int32_t ipactr = 0; pglpactr != pvNil && ipactr < pglpactr->IvMac(); ipactr++)
+        {
+            PACTR pactrOther;
+            pglpactr->Get(ipactr, &pactrOther);
+            if (pactrOther == pactr || !pactrOther->FOnStage())
+                continue;
+            Obstacle obs;
+            Vec3 pos = stage.FromWorld(_XyzWorld(pactrOther));
+            GetActorFootprint(pactrOther, &obs.radius, &obs.height);
+            obs.x = pos.x;
+            obs.z = pos.z;
+            vecObstacles.push_back(obs);
+        }
+        std::vector<Vec3> vecStageTargets;
+        for (const Vec3 &target : vecTargets)
+            vecStageTargets.push_back(stage.FromWorld(target));
+        double dRadius, dHeight;
+        GetActorFootprint(pactr, &dRadius, &dHeight);
+        for (RouteStep step : VecRouteAround(stage.FromWorld(start), vecStageTargets, vecObstacles, dRadius))
+        {
+            step.position = step.itarget >= 0 ? vecTargets[step.itarget] : stage.ToWorld(step.position);
+            vecSteps.push_back(step);
+        }
+    }
+    else
+    {
+        for (size_t i = 0; i < vecTargets.size(); i++)
+            vecSteps.push_back({vecTargets[i], static_cast<int32_t>(i)});
+    }
+    int32_t cdetour = 0;
+    for (const RouteStep &step : vecSteps)
+        cdetour += step.itarget < 0;
+
     RecordState rs;
     if (!_FBeginRecord(req, pactr, anid, &rs))
         return fFalse;
 
     bool fOk = fTrue;
-    for (size_t i = 0; fOk && i < vecTargets.size(); i++)
+    for (size_t i = 0; fOk && i < vecSteps.size(); i++)
     {
-        fOk = _FRecordToward(req, &rs, vecTargets[i], dwrStep);
-        if (fOk && vecPause[i] > 0)
-            fOk = _FRecordInPlace(req, &rs, vecPause[i]);
+        Vec3 target = vecSteps[i].position;
+        if (vecSteps[i].itarget < 0)
+            target.y = start.y; // detours keep the walker's height
+        fOk = _FRecordToward(req, &rs, target, dwrStep);
+        if (fOk && vecSteps[i].itarget >= 0 && vecPause[vecSteps[i].itarget] > 0)
+            fOk = _FRecordInPlace(req, &rs, vecPause[vecSteps[i].itarget]);
     }
     if (!fOk)
     {
@@ -706,6 +754,8 @@ static bool _FCmdMoveActor(Request &req)
     if (!_FApplyThen(req, pactr, &strThen))
         return fFalse;
     req.result.Set("then", strThen);
+    if (cdetour > 0)
+        req.result.Set("detours", cdetour);
     req.result.Set("start_frame", nfrmStart);
     req.result.Set("end_frame", pscen->Nfrm());
     req.result.Set("frames", pscen->Nfrm() - nfrmStart);
@@ -716,6 +766,52 @@ static bool _FCmdMoveActor(Request &req)
                            "faster action (e.g. run) to cover ground quicker.");
     EnsureRendered(pmvie);
     req.result.Set("actor", JsonActor(pmvie, pactr, stage, camera));
+    return fTrue;
+}
+
+bool FHoldInPlace(Request &req, PACTR pactr, int32_t anid, int32_t cfrm)
+{
+    PSCEN pscen = pactr->Pscen();
+    PMVIE pmvie = pscen->Pmvie();
+    // The in-place recording needs a non-zero step for the action, but the
+    // step is never taken (each sample is stationary). For zero-step actions
+    // (talk, wave, ...) ACTR::FRecordMove can't be used; set the action and
+    // extend the actor's life with a step event at the end frame instead.
+    int32_t nfrmStart = pscen->Nfrm();
+    double dwrStep;
+    Request reqProbe;
+    if (_FStepForAction(reqProbe, pactr, anid, &dwrStep))
+    {
+        RecordState rs;
+        if (!_FBeginRecord(req, pactr, anid, &rs))
+            return fFalse;
+        bool fOk = _FRecordInPlace(req, &rs, cfrm);
+        Request reqT;
+        if (!_FEndRecord(fOk ? req : reqT, &rs))
+            fOk = fFalse;
+        if (!fOk)
+        {
+            pmvie->FUndo();
+            StrDrainEngineErrors();
+            RefreshViews(pmvie);
+            return fFalse;
+        }
+    }
+    else
+    {
+        if (!_FEditActor(req, pactr, "animate the actor", [&]() {
+                if (!pactr->FSetActionCore(anid, 0, fFalse))
+                    return false;
+                if (!pscen->FGotoFrm(nfrmStart + cfrm))
+                    return false;
+                // A step event at the end frame keeps the actor alive (and
+                // animating) until then
+                return pactr->FSetStep(rZero);
+            }))
+        {
+            return fFalse;
+        }
+    }
     return fTrue;
 }
 
@@ -760,45 +856,9 @@ static bool _FCmdAnimate(Request &req)
     if (req.FHasArg("action") && !FResolveAction(req, pactr->Ptmpl(), req.args.Get("action"), &anid))
         return fFalse;
 
-    // The in-place recording needs a non-zero step for the action, but the
-    // step is never taken (each sample is stationary). For zero-step actions
-    // (talk, wave, ...) ACTR::FRecordMove can't be used; set the action and
-    // extend the actor's life with a step event at the end frame instead.
     int32_t nfrmStart = pscen->Nfrm();
-    double dwrStep;
-    Request reqProbe;
-    if (_FStepForAction(reqProbe, pactr, anid, &dwrStep))
-    {
-        RecordState rs;
-        if (!_FBeginRecord(req, pactr, anid, &rs))
-            return fFalse;
-        bool fOk = _FRecordInPlace(req, &rs, cfrm);
-        Request reqT;
-        if (!_FEndRecord(fOk ? req : reqT, &rs))
-            fOk = fFalse;
-        if (!fOk)
-        {
-            pmvie->FUndo();
-            StrDrainEngineErrors();
-            RefreshViews(pmvie);
-            return fFalse;
-        }
-    }
-    else
-    {
-        if (!_FEditActor(req, pactr, "animate the actor", [&]() {
-                if (!pactr->FSetActionCore(anid, 0, fFalse))
-                    return false;
-                if (!pscen->FGotoFrm(nfrmStart + cfrm))
-                    return false;
-                // A step event at the end frame keeps the actor alive (and
-                // animating) until then
-                return pactr->FSetStep(rZero);
-            }))
-        {
-            return fFalse;
-        }
-    }
+    if (!FHoldInPlace(req, pactr, anid, cfrm))
+        return fFalse;
 
     std::string strThen;
     if (!_FApplyThen(req, pactr, &strThen))

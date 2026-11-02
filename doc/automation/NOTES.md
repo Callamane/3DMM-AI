@@ -507,6 +507,30 @@ on the way:
   cut off at the sides, not box-covered by a nearer actor by more than
   35%, and at least 80% visible. Movies it arranges play the same in the
   stock build.
+* Physics (physics.cpp, unit tested; physicscmd.cpp). The engine has no
+  physics, and a recorded path can't hold arbitrary per-frame positions:
+  `FRecordMove` places route points exactly one action-step apart, so speed
+  comes from the action. Instead the actor holds its action in place
+  (`FHoldInPlace`, the same recording animate uses) and every frame gets a
+  `FMoveRoute` without `fmafEntireSubrte`, i.e. an `aetMove` "move from
+  here" event, the Studio's own edit, so the stock build plays it. Spin is
+  `FRotate` per frame (actors roll about their model z axis after being
+  turned to face the travel); squash-and-stretch on hard floor impacts is
+  `FPull` (the Studio's squash tool; it multiplies the current stretch, so
+  the bake applies ratios and restores 1:1 two frames later). The
+  simulation: 20 substeps per frame, gravity 9.8, restitution from
+  `bounciness`, Coulomb friction on the floor and at bounces, light air
+  drag; other actors are vertical cylinders sized from their world bounds
+  (`GetActorFootprint`) at each frame, so moving actors are hit where they
+  are. A Cube thrown at Frank plays identically in the stock build.
+* Walks avoid people: `move_actor(avoid_actors)` (default on) runs the path
+  through `VecRouteAround`, which inserts a detour beside anyone a leg
+  would pass through (where they stand at the start frame), on the side
+  the leg was closer to, or the camera side when it's nearly a tie so the
+  walker stays in view. Legs that start or end at someone are left alone.
+* review_movie flags collisions: two on-stage actors closer than 70% of
+  their combined footprint radii at the same height ("walk through each
+  other" if either is moving, else "stand inside each other").
 * `review_movie` (reviewcmd.cpp; rules in review.cpp, unit tested) steps
   every frame of each scene without rendering to track movement, action
   changes, sound starts, cuts and text visibility, then renders every third

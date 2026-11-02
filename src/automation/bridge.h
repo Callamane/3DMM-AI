@@ -94,6 +94,7 @@ extern const CommandInfo krgcmdObserve[];
 extern const CommandInfo krgcmdExport[];
 extern const CommandInfo krgcmdReview[];
 extern const CommandInfo krgcmdBlock[];
+extern const CommandInfo krgcmdPhysics[];
 
 /***************************************************************************
     BRender number conversions. This build of BRender is fixed point
@@ -153,6 +154,12 @@ bool FTurnToFace(Request &req, PMVIE pmvie, PACTR pactr, const Json &jsonFace, d
 // render against its pixels with nothing in front of it (observe.cpp). Low
 // values mean scenery or other actors hide it.
 bool FVisibleFraction(PMVIE pmvie, PACTR pactr, double *pdFraction);
+// Keeps an actor in place doing anid for cfrm frames from the current frame
+// (recording replaces what it did afterwards), extending the scene
+bool FHoldInPlace(Request &req, PACTR pactr, int32_t anid, int32_t cfrm);
+// An actor's footprint radius and height in metres, from its world bounds
+// (physicscmd.cpp)
+void GetActorFootprint(PACTR pactr, double *pdRadius, double *pdHeight);
 // JSON description of an actor (actorcmd.cpp)
 Json JsonActor(PMVIE pmvie, PACTR pactr, const StageFrame &stage, const CameraModel &camera);
 

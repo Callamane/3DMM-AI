@@ -508,9 +508,38 @@ pub fn all_tools() -> Vec<ToolSpec> {
                     },
                     "action": {"type": ["string", "integer"], "description": "Moving action (default: the current action)."},
                     "then": {"type": "string", "enum": ["rest", "freeze"], "default": "rest", "description": "Afterwards: return to the rest pose, or hold the last pose."},
+                    "avoid_actors": {"type": "boolean", "default": true, "description": "Step around anyone standing in the way (where they are at the start frame), passing on the camera side when it's a toss-up. The result reports detours."},
                     "frame": frame_prop()
                 }),
                 &["path"],
+            ),
+        ),
+        bridge(
+            "physics",
+            "Make an actor or prop move under gravity from the current frame: drop it (from 'height'), throw it \
+             at a point or another actor ('to', arcing 'height' metres up), or launch it with a 'velocity'. It \
+             bounces off the floor and off other actors, slides to a stop with friction and settles; hard \
+             landings get a squash-and-stretch, and spin can tumble or twirl it. Baked into ordinary frames, so \
+             the movie plays the same in any 3D Movie Maker. Returns each impact (frame, speed, what was hit) so \
+             you can attach_sound a bump or animate a reaction on that frame. Like move_actor, it replaces what \
+             the actor did after the start frame. Sphere, Cube and the other props make good balls and crates.",
+            obj(
+                json!({
+                    "actor": actor_ref(""),
+                    "motion": {"type": "string", "enum": ["drop", "throw", "launch"], "description": "Default: throw if 'to' is given, launch if 'velocity' is, else drop."},
+                    "to": {"description": "Throw target: a stage point {x, z} or an actor id/name (it will hit them)."},
+                    "height": {"type": "number", "minimum": 0, "description": "Drop: start height in metres (default 1.5). Throw: how high the arc rises above the start (default 1)."},
+                    "velocity": {"type": "object", "description": "Launch: {x, y, z} metres per second (x right, y up, z away)."},
+                    "bounciness": {"type": "number", "minimum": 0, "maximum": 0.95, "default": 0.5},
+                    "friction": {"type": "number", "minimum": 0, "maximum": 2, "default": 0.4},
+                    "spin": {"type": "string", "enum": ["none", "tumble", "twirl"], "default": "none"},
+                    "squash": {"type": "boolean", "default": true, "description": "Squash and stretch on hard landings."},
+                    "collide": {"type": "boolean", "default": true, "description": "Bounce off other actors."},
+                    "action": {"type": ["string", "integer"], "description": "What the actor does meanwhile (default: its current action)."},
+                    "max_seconds": {"type": "number", "minimum": 0.5, "maximum": 30, "default": 20},
+                    "frame": frame_prop()
+                }),
+                &[],
             ),
         ),
         bridge(
@@ -932,6 +961,7 @@ pub const WORKFLOW_GUIDE: &str = r#"# Making a movie with 3D Movie Maker
    - `move_actor(actor, path: [{x,z},...], action: "Walk Fast")` walks from the current frame and reports the arrival frame.
    - `speak_line(actor, text, voice, action: "Talk")` synthesizes the line, attaches it, and acts it for exactly its length; chain lines using the returned `end_frame`. Give each character its own voice.
    - `animate(actor, action, seconds)` does an action on the spot (laugh, dance, think) and extends the scene.
+   - `physics(actor, to: "Greg")` throws something (a Sphere prop makes a ball) that arcs, bounces off people and the floor and rolls to a stop; `motion: "drop"` drops it. Use the returned impact frames for a bump sound or a reaction. Walks step around people by themselves (`avoid_actors`).
    - Actors return to their rest pose afterwards (`then: "freeze"` to hold the last pose).
 7. **Camera and text** — `set_camera(camera, frame)` cuts within a scene. `add_text(text, kind: "caption", rect: "top"|"bottom"|"center", frame, until_frame, size, color)` for titles and subtitles.
 8. **Check** — `storyboard` shows a whole scene on one image; `suggest_camera` ranks angles for the actors in shot; `describe_timeline` summarises who does what when (cameras, actions, movement, text, sounds). `render_frame(frame)` shows a frame. `get_state(all_scenes: true)` gives every scene's length and the total. **`review_movie` checks everything at once** (actors out of shot, cut off or hidden while speaking, unreadable text, dead stretches) and says how to fix each problem; run it before saving and again after fixing.

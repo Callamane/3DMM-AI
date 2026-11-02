@@ -9,6 +9,7 @@
 
 #include "image8.h"
 #include "json.h"
+#include "physics.h"
 #include "pngwrite.h"
 #include "review.h"
 #include "stage.h"
@@ -336,4 +337,145 @@ TEST(AutomationStage, GroupSpots)
     EXPECT_EQ(VecGroupSpots(1, 1.0, true).size(), 1u);
     EXPECT_NEAR(VecGroupSpots(1, 1.0, true)[0].x, 0, 1e-9);
     EXPECT_LT(SpotGroupFocus(1.0).z, 0); // toward the camera
+}
+
+static std::vector<Obstacle> NoObstacles(int32_t)
+{
+    return {};
+}
+
+TEST(AutomationPhysics, DropBouncesLowerEachTimeAndRests)
+{
+    PhysicsParams params;
+    auto frames = VecSimulate(params, Vec3(0, 2, 0), Vec3(0, 0, 0), NoObstacles);
+    // Falls 2 m in sqrt(2h/g) = 0.64 s: the impact lands in frame 4 at 6 fps
+    int32_t ifrmFirstImpact = -1;
+    for (size_t i = 0; i < frames.size() && ifrmFirstImpact < 0; i++)
+    {
+        if (frames[i].fImpact)
+            ifrmFirstImpact = static_cast<int32_t>(i);
+    }
+    EXPECT_EQ(ifrmFirstImpact, 4);
+    // The next peak is about restitution^2 of the drop height
+    double yPeak = 0;
+    for (size_t i = ifrmFirstImpact + 1; i < frames.size() && !frames[i].fImpact; i++)
+        yPeak = std::max(yPeak, frames[i].position.y);
+    EXPECT_NEAR(yPeak, 2 * 0.6 * 0.6, 0.15);
+    // Comes to rest on the floor well before the time limit
+    EXPECT_LT(frames.size(), 60u);
+    EXPECT_NEAR(frames.back().position.y, 0, 1e-9);
+    EXPECT_NEAR(frames.back().velocity.Length(), 0, 1e-9);
+}
+
+TEST(AutomationPhysics, DeadDropDoesNotBounce)
+{
+    PhysicsParams params;
+    params.restitution = 0;
+    auto frames = VecSimulate(params, Vec3(0, 1, 0), Vec3(0, 0, 0), NoObstacles);
+    bool fLanded = false;
+    for (const PhysicsFrame &frame : frames)
+    {
+        if (fLanded)
+            EXPECT_NEAR(frame.position.y, 0, 1e-9);
+        fLanded = fLanded || frame.fImpact;
+    }
+    EXPECT_TRUE(fLanded);
+}
+
+TEST(AutomationPhysics, FrictionStopsASlide)
+{
+    PhysicsParams params; // mu 0.4: 2 m/s stops after v^2 / (2 mu g) = 0.51 m
+    auto frames = VecSimulate(params, Vec3(0, 0, 0), Vec3(2, 0, 0), NoObstacles);
+    EXPECT_NEAR(frames.back().position.x, 0.51, 0.05);
+    EXPECT_NEAR(frames.back().position.y, 0, 1e-9);
+}
+
+TEST(AutomationPhysics, ThrowLandsOnTarget)
+{
+    PhysicsParams params;
+    params.airDrag = 0;
+    Vec3 from(-2, 0, 1), to(1.5, 0, 3);
+    Vec3 vel = VelocityToLand(from, to, 1.5, params.gravity);
+    auto frames = VecSimulate(params, from, vel, NoObstacles);
+    const PhysicsFrame *pfirst = nullptr;
+    for (const PhysicsFrame &frame : frames)
+    {
+        if (frame.fImpact)
+        {
+            pfirst = &frame;
+            break;
+        }
+    }
+    ASSERT_NE(pfirst, nullptr);
+    // Lands within one frame's travel of the target
+    double dPerFrame = std::sqrt(vel.x * vel.x + vel.z * vel.z) / params.framesPerSecond;
+    EXPECT_LT(std::hypot(pfirst->position.x - to.x, pfirst->position.z - to.z), dPerFrame);
+}
+
+TEST(AutomationPhysics, BouncesOffAnotherActor)
+{
+    PhysicsParams params;
+    params.friction = 0;
+    auto obstacles = [](int32_t) { return std::vector<Obstacle>{{1.5, 0, 0.3, 1.8}}; };
+    auto frames = VecSimulate(params, Vec3(0, 0, 0), Vec3(3, 0, 0), obstacles);
+    int32_t ifrmHit = -1;
+    for (size_t i = 0; i < frames.size(); i++)
+    {
+        if (frames[i].fImpact && frames[i].iobstacleHit == 0)
+        {
+            ifrmHit = static_cast<int32_t>(i);
+            break;
+        }
+    }
+    ASSERT_GE(ifrmHit, 0);
+    EXPECT_LT(frames[ifrmHit].velocity.x, 0); // heading back
+    for (const PhysicsFrame &frame : frames)
+        EXPECT_LE(frame.position.x, 1.5 - 0.3 - 0.25 + 1e-6); // never inside it
+}
+
+// Closest any leg of a walk comes to a point
+static double DistClosest(const Vec3 &start, const std::vector<RouteStep> &steps, double x, double z)
+{
+    double dBest = 1e9;
+    Vec3 a = start;
+    for (const RouteStep &step : steps)
+    {
+        Vec3 b = step.position;
+        for (int32_t i = 0; i <= 100; i++)
+        {
+            double t = i / 100.0;
+            dBest = std::min(dBest, std::hypot(a.x + (b.x - a.x) * t - x, a.z + (b.z - a.z) * t - z));
+        }
+        a = b;
+    }
+    return dBest;
+}
+
+TEST(AutomationPhysics, WalkGoesAroundSomeoneInTheWay)
+{
+    std::vector<Obstacle> obstacles{{0, 0, 0.3, 1.8}};
+    auto steps = VecRouteAround(Vec3(-3, 0, 0), {Vec3(3, 0, 0)}, obstacles, 0.25);
+    ASSERT_GE(steps.size(), 2u);
+    EXPECT_EQ(steps.back().itarget, 0); // still ends where asked
+    EXPECT_EQ(steps.front().itarget, -1);
+    EXPECT_GE(DistClosest(Vec3(-3, 0, 0), steps, 0, 0), 0.3 + 0.25);
+    EXPECT_LT(steps.front().position.z, 0); // passes in front of them, toward the camera
+}
+
+TEST(AutomationPhysics, WalkLeavesClearPathsAndDestinationsAlone)
+{
+    std::vector<Obstacle> obstacles{{0, 2, 0.3, 1.8}, {3, 0, 0.3, 1.8}};
+    // Passes well clear of the first, and walks up to the second on purpose
+    auto steps = VecRouteAround(Vec3(-3, 0, 0), {Vec3(3, 0, 0)}, obstacles, 0.25);
+    ASSERT_EQ(steps.size(), 1u);
+    EXPECT_EQ(steps[0].itarget, 0);
+}
+
+TEST(AutomationPhysics, WalkThreadsThroughACrowd)
+{
+    std::vector<Obstacle> obstacles{{-1, 0.1, 0.3, 1.8}, {0, -0.1, 0.3, 1.8}, {1, 0.05, 0.3, 1.8}};
+    auto steps = VecRouteAround(Vec3(-3, 0, 0), {Vec3(3, 0, 0)}, obstacles, 0.25);
+    for (const Obstacle &obs : obstacles)
+        EXPECT_GE(DistClosest(Vec3(-3, 0, 0), steps, obs.x, obs.z), obs.radius + 0.25) << obs.x;
+    EXPECT_EQ(steps.back().itarget, 0);
 }

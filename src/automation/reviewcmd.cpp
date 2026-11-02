@@ -29,7 +29,9 @@ const int32_t kcfrmSpeech = 12;    // a line counts as being spoken for two seco
 const double kdSecStaticMax = 8;   // flag longer stretches where nothing changes
 const double kdSecSceneMin = 1.5;  // shorter scenes flash by
 const double kdVisibleMin = 0.4;   // less of its silhouette showing counts as hidden
-const double kdOccluderMin = 0.3;  // box overlap that names a nearer actor as the one in the way
+const double kdOccluderMin = 0.3;
+const double kdOverlapShare = 0.7; // closer than this share of their radii counts as inside each other  // box overlap
+                                   // that names a nearer actor as the one in the way
 const int32_t kcTinyDivisor = 6;   // shorter than this fraction of the view is hard to see
 const double kdMoveMin = 0.02;     // metres per frame; less is standing still
 const int32_t kcissueMax = 100;    // keep the reply readable
@@ -211,6 +213,7 @@ static bool _FReviewScene(Request &req, PMVIE pmvie, int32_t iscen, std::vector<
     RC rcView(0, 0, 544, 306);
     if (PmvuCur() != pvNil)
         PmvuCur()->GetRc(&rcView, cooLocal);
+    std::map<std::pair<size_t, size_t>, std::vector<int32_t>> mapCollisions; // sampled frames per pair
     for (int32_t nfrm : setSample)
     {
         if (!pscen->FGotoFrm(nfrm))
@@ -277,6 +280,35 @@ static bool _FReviewScene(Request &req, PMVIE pmvie, int32_t iscen, std::vector<
             vecTracks[back.itrack].vecHidden.push_back(nfrm);
             vecTracks[back.itrack].mapHiddenBy[nfrm] = strBy;
         }
+
+        // Collisions: two actors' bodies inside each other
+        std::vector<size_t> vecOn;
+        std::vector<Vec3> vecPos;
+        std::vector<double> vecRadius, vecHeight;
+        for (size_t itrack = 0; itrack < vecTracks.size(); itrack++)
+        {
+            PACTR pactr = vecTracks[itrack].pactr;
+            if (!pactr->FOnStage())
+                continue;
+            BRS xr, yr, zr;
+            double dRadius, dHeight;
+            pactr->Pbody()->GetPosition(&xr, &yr, &zr);
+            GetActorFootprint(pactr, &dRadius, &dHeight);
+            vecOn.push_back(itrack);
+            vecPos.push_back(Vec3(DFromBrs(xr), DFromBrs(yr), DFromBrs(zr)) * (1 / kdwrPerMetre));
+            vecRadius.push_back(dRadius);
+            vecHeight.push_back(dHeight);
+        }
+        for (size_t i = 0; i < vecOn.size(); i++)
+        {
+            for (size_t j = i + 1; j < vecOn.size(); j++)
+            {
+                double dist = std::hypot(vecPos[i].x - vecPos[j].x, vecPos[i].z - vecPos[j].z);
+                bool fLevel = vecPos[i].y < vecPos[j].y + vecHeight[j] && vecPos[j].y < vecPos[i].y + vecHeight[i];
+                if (fLevel && dist < kdOverlapShare * (vecRadius[i] + vecRadius[j]))
+                    mapCollisions[{vecOn[i], vecOn[j]}].push_back(nfrm);
+            }
+        }
     }
 
     const std::string kstrFixShot = "move them into view (render_frame(overlay: true) shows the floor grid the camera "
@@ -320,6 +352,20 @@ static bool _FReviewScene(Request &req, PMVIE pmvie, int32_t iscen, std::vector<
         {
             add("info", "tiny", range, track.strName, track.strName + " looks very small (far from the camera)",
                 "move them closer to the camera (lower z) or use a closer camera");
+        }
+    }
+
+    for (const auto &entry : mapCollisions)
+    {
+        const ActorTrack &trackA = vecTracks[entry.first.first], &trackB = vecTracks[entry.first.second];
+        for (const FrameRange &range : VecRanges(entry.second, kcfrmSampleStep))
+        {
+            bool fMoving = _FMoving(trackA, range) || _FMoving(trackB, range);
+            add("warning", "collision", range, trackA.strName,
+                trackA.strName + " and " + trackB.strName +
+                    (fMoving ? " walk through each other" : " stand inside each other"),
+                "move one of them (place_actor, arrange_actors), route the walk around the other (move_actor "
+                "with avoid_actors), or have them bump with physics");
         }
     }
 
