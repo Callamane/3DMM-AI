@@ -6,6 +6,7 @@
 
 pub mod bridge;
 pub mod launcher;
+pub mod script;
 pub mod server;
 pub mod speech;
 pub mod tools;

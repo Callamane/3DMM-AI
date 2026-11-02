@@ -1,0 +1,169 @@
+//! Drives the real MCP server over stdio, as an AI client would: a scene
+//! built from a script with script_scene, then checked.
+//!
+//! Needs a built 3DMMEx with the automation bridge and text-to-speech, so
+//! it is ignored by default:
+//!   cargo test --test mcp_script -- --ignored
+
+use std::process::Stdio;
+use std::time::Duration;
+
+use anyhow::{bail, ensure, Context, Result};
+use serde_json::{json, Value};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
+use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+
+const PORT: u16 = 7398;
+
+struct Client {
+    _child: Child,
+    stdin: ChildStdin,
+    lines: Lines<BufReader<ChildStdout>>,
+    next_id: u64,
+}
+
+impl Client {
+    async fn start() -> Result<Self> {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_3dmm-mcp"))
+            .env("THREEDMM_PORT", PORT.to_string())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .context("starting the MCP server")?;
+        let stdin = child.stdin.take().context("stdin")?;
+        let lines = BufReader::new(child.stdout.take().context("stdout")?).lines();
+        let mut client = Client {
+            _child: child,
+            stdin,
+            lines,
+            next_id: 1,
+        };
+        client
+            .rpc(
+                "initialize",
+                json!({"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}}),
+            )
+            .await?;
+        client
+            .send(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))
+            .await?;
+        Ok(client)
+    }
+
+    async fn send(&mut self, message: Value) -> Result<()> {
+        let mut line = serde_json::to_string(&message)?;
+        line.push('\n');
+        self.stdin.write_all(line.as_bytes()).await?;
+        Ok(())
+    }
+
+    async fn rpc(&mut self, method: &str, params: Value) -> Result<Value> {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.send(json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}))
+            .await?;
+        loop {
+            let line = tokio::time::timeout(Duration::from_secs(600), self.lines.next_line())
+                .await
+                .context("the server did not answer")??
+                .context("the server closed its output")?;
+            let reply: Value = serde_json::from_str(&line)?;
+            if reply["id"] == json!(id) {
+                return Ok(reply);
+            }
+        }
+    }
+
+    /// Calls a tool; returns its JSON result, or the error text as Err
+    async fn tool(&mut self, name: &str, args: Value) -> Result<Value> {
+        let reply = self
+            .rpc("tools/call", json!({"name": name, "arguments": args}))
+            .await?;
+        let result = &reply["result"];
+        let text = result["content"]
+            .as_array()
+            .and_then(|c| c.iter().rev().find(|b| b["type"] == "text"))
+            .and_then(|b| b["text"].as_str())
+            .unwrap_or_default()
+            .to_string();
+        if result["isError"] == json!(true) || reply.get("error").is_some() {
+            bail!("{name} failed: {text}{}", reply["error"]);
+        }
+        Ok(serde_json::from_str(&text).unwrap_or(Value::String(text)))
+    }
+}
+
+#[tokio::test]
+#[ignore = "needs a built 3DMMEx with the automation bridge and text-to-speech"]
+async fn script_scene_builds_a_reviewed_scene() -> Result<()> {
+    let mut c = Client::start().await?;
+    c.tool("new_movie", json!({"discard_changes": true}))
+        .await?;
+
+    // A bad script is rejected before anything is built, naming the entry
+    let err = c
+        .tool(
+            "script_scene",
+            json!({"background": "diner", "cast": [{"name": "A", "actor": "Frank"}],
+                   "lines": [{"who": "B", "says": "hi"}]}),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    ensure!(err.contains("lines[0]"), "{err}");
+    let state = c.tool("get_state", json!({})).await?;
+    ensure!(state["movie"]["scene_count"] == 0, "nothing built: {state}");
+
+    let scene = c
+        .tool(
+            "script_scene",
+            json!({
+                "background": "diner",
+                "title": "TEST",
+                "cast": [{"name": "Ann", "actor": "Bella"}, {"name": "Bob", "actor": "Gregory"}],
+                "lines": [
+                    {"who": "Ann", "says": "Is this seat taken?"},
+                    {"who": "Bob", "does": "Laugh", "seconds": 1},
+                    {"who": "Bob", "says": "Only by my sandwich."},
+                    {"wait": 1}
+                ]
+            }),
+        )
+        .await?;
+    let lines = scene["lines"].as_array().context("lines")?;
+    ensure!(lines.len() == 3, "{scene}");
+    // Lines follow one another without overlapping
+    for pair in lines.windows(2) {
+        ensure!(
+            pair[1]["from"].as_i64() > pair[0]["to"].as_i64(),
+            "overlap: {pair:?}"
+        );
+    }
+    // Each character got their own voice where voices can be listed
+    let voices: Vec<&Value> = scene["cast"]
+        .as_array()
+        .context("cast")?
+        .iter()
+        .map(|m| &m["voice"])
+        .collect();
+    if voices.iter().all(|v| v.is_string()) {
+        ensure!(voices[0] != voices[1], "{scene}");
+    }
+    ensure!(
+        scene["shots"].as_array().is_some_and(|s| !s.is_empty()),
+        "{scene}"
+    );
+    ensure!(scene["review"]["verdict"].is_string(), "{scene}");
+    // The closing pause is held: the scene lasts past the last line
+    let state = c.tool("get_state", json!({"all_scenes": true})).await?;
+    let last = state["scenes"][0]["last_frame"].as_i64().unwrap_or(0);
+    ensure!(
+        last >= lines[2]["to"].as_i64().unwrap_or(0) + 6,
+        "the final wait was kept: {state}"
+    );
+
+    c.tool("quit", json!({"discard_changes": true})).await.ok();
+    Ok(())
+}

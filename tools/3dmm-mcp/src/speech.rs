@@ -9,6 +9,20 @@ use tokio::process::Command;
 
 static NEXT_LINE: AtomicU32 = AtomicU32::new(1);
 
+/// Installed voices as (name, locale). Empty where they can't be listed
+/// (Windows voices are chosen by SAPI's default).
+pub async fn installed_voices() -> Vec<(String, String)> {
+    if !cfg!(target_os = "macos") {
+        return Vec::new();
+    }
+    match Command::new("say").arg("-v").arg("?").output().await {
+        Ok(output) if output.status.success() => {
+            crate::script::parse_say_voices(&String::from_utf8_lossy(&output.stdout))
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// Synthesizes `text` to a new WAV file and returns its path.
 pub async fn synthesize(text: &str, voice: Option<&str>) -> Result<PathBuf> {
     if text.trim().is_empty() {

@@ -20,6 +20,8 @@ pub enum Kind {
     ExportVideo,
     /// Synthesize a spoken line, import it and (optionally) attach and act it.
     SpeakLine,
+    /// Build a whole scene from a script (MCP side, composed of bridge calls).
+    ScriptScene,
 }
 
 pub struct ToolSpec {
@@ -733,6 +735,55 @@ pub fn all_tools() -> Vec<ToolSpec> {
             ),
         ),
         spec(
+            "script_scene",
+            Kind::ScriptScene,
+            "Build a whole scene from a script in one call: adds the scene on the set, casts the characters, \
+             blocks them (arrange_actors), plays every line in order (synthesized speech acted with a talking \
+             action, or an action for so many seconds, or a pause), adds a title, edits the camera cuts \
+             (auto_camera) and reviews the result (review_movie), returning the timing of each line, the shot \
+             list and any problems to fix. Characters without a voice each get a different one. If the movie \
+             already has scenes it checkpoints first. Afterwards everything can be refined with the normal \
+             tools. Example lines: {\"who\": \"Frank\", \"says\": \"Those are my fries.\"}, \
+             {\"who\": \"Greg\", \"does\": \"Laugh\", \"seconds\": 2}, {\"wait\": 1}.",
+            obj(
+                json!({
+                    "background": {"type": "string", "description": "Set name or a word from its description (\"diner\", \"haunted\")."},
+                    "camera": {"type": "integer", "minimum": 0, "description": "Starting camera (auto_camera re-cuts anyway)."},
+                    "title": {"type": "string", "description": "Caption at the top for as long as it takes to read."},
+                    "cast": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "actor": {"type": "string", "description": "Actor template or a description word (list_templates)."},
+                                "voice": {"type": "string", "description": "Speech voice; default: a different one for each character."}
+                            },
+                            "required": ["name", "actor"]
+                        }
+                    },
+                    "lines": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "who": {"type": "string"},
+                                "says": {"type": "string"},
+                                "action": {"type": ["string", "integer"], "description": "With says: how to act it (default Talk)."},
+                                "does": {"type": ["string", "integer"], "description": "An action to do instead of speaking."},
+                                "seconds": {"type": "number", "description": "With does: how long (default 2)."},
+                                "wait": {"type": "number", "description": "A pause in seconds."}
+                            }
+                        }
+                    },
+                    "layout": {"type": "string", "enum": ["conversation", "line"], "default": "conversation"},
+                    "camera_style": {"type": "string", "enum": ["coverage", "wide", "none"], "default": "coverage"},
+                    "transition": {"type": "string", "description": "Transition after this scene (cut, dissolve, fade_to_black...)."}
+                }),
+                &["background", "cast", "lines"],
+            ),
+        ),
+        spec(
             "speak_line",
             Kind::SpeakLine,
             "Give an actor a line of dialogue: synthesizes the text as speech on this computer, imports it into \
@@ -963,6 +1014,7 @@ pub fn all_tools() -> Vec<ToolSpec> {
     for tool in &mut tools {
         match tool.name {
             "play" => tool.timeout_secs = 15 * 60,
+            "script_scene" => tool.timeout_secs = 10 * 60,
             "export_frames" | "export_video" => tool.timeout_secs = 20 * 60,
             "goto_studio" | "launch" | "preview_cameras" | "describe_timeline" | "storyboard"
             | "suggest_camera" | "review_movie" | "auto_camera" => tool.timeout_secs = 120,
@@ -975,6 +1027,7 @@ pub fn all_tools() -> Vec<ToolSpec> {
 /// Short workflow guide, served as an MCP resource and prompt.
 pub const WORKFLOW_GUIDE: &str = r#"# Making a movie with 3D Movie Maker
 
+0. **Fastest start** — `script_scene(background, cast, lines)` builds a whole scene from a script (set, cast, blocking, dialogue, cuts, review) in one call; then refine it with the tools below. Call it once per scene.
 1. **Plan** — movies run at 6 frames per second; a 30 s movie is ~180 frames across all scenes. Each scene has its own frame numbers from 1 and lasts as long as its longest-living actor.
 2. **Pick a set** — `list_backgrounds` (each has a description; `filter: "diner"` works). `preview_cameras(background)` shows every camera angle on one image without changing the movie.
 3. **Scene** — `add_scene(background, camera)`. A new movie has no scenes; add one before anything else.

@@ -164,7 +164,7 @@ actors by numeric id or name.
 | Text and sound | `add_text`, `edit_text`, `remove_text`, `import_sound`, `attach_sound`, `remove_sound`, `speak_line` (MCP only: text-to-speech dialogue, attached and acted) |
 | Observe and play | `describe_scene`, `describe_timeline` (who does what when), `render_frame` (returns the image; `overlay` draws the stage grid and actor labels), `preview_cameras` (every angle of a set on one image), `storyboard` (a scene's frames on one image, or the whole movie with `all_scenes`), `suggest_camera` (angles ranked for the actors in shot), `auto_camera` (edits a scene's cuts: establishing shot, then the best angle on whoever speaks), `review_movie` (automatic check: actors out of shot, cut off or hidden, unreadable text, dead stretches, each with a fix), `export_frames` (PNG sequence), `play`, `stop` |
 | Export | `export_video` (MCP: MP4 with transitions and all sound, music rendered from MIDI; needs ffmpeg), `export_media` (bridge: frames + audio cues), `export_frames` |
-| MCP only | `batch` (several calls in one) |
+| MCP only | `script_scene` (a whole scene from a script: set, cast, blocking, dialogue, title, cuts and a review, in one call), `batch` (several calls in one) |
 
 The MCP server checks arguments against each tool's schema and rejects unknown names (with the list it takes)
 instead of letting a typo fall back to a default target. Background and actor names also match their descriptions,

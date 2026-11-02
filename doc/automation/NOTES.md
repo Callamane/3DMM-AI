@@ -344,6 +344,12 @@ every command that takes content also accepts the display name
 * `tools/3dmm-mcp/tests/end_to_end.rs` (two scenes: walk + caption + camera
   cut; two actors with different actions, scene music, imported WAV on an
   actor; save, reopen, play) passes against the debug build with asserts on.
+* `tools/3dmm-mcp/tests/mcp_script.rs` starts the real MCP server binary and
+  talks JSON-RPC to it like an AI client: a bad script is refused before
+  anything is built, then a scripted scene comes back with lines in order
+  and not overlapping, distinct voices, a shot list, a review, and the
+  closing pause held. Both are ignored by default; run them with
+  `cargo test -- --include-ignored` once a build is installed in dist/.
 * The saved movie opens and plays in a **stock, unmodified** 3DMMEx built
   from the base commit (`4c1fa94`), launched with its existing `-A`
   (autoplay) switch: caption, walk, camera cut, dissolve and scene 2 all
@@ -561,6 +567,19 @@ on the way:
   actor fully behind a booth measured as fully visible), and switching back
   must restore the set's depth everywhere or actors could later draw
   through furniture.
+* `script_scene` (MCP side, tools/3dmm-mcp/src/script.rs + server.rs) checks
+  the whole script first (cast names, one of says/does/wait per line,
+  durations) and reports the exact entry at fault, so a bad script builds
+  nothing. Then: checkpoint (if the movie has scenes), add_scene, add_actor
+  per character, arrange_actors, each line in order on a running frame
+  counter (speak_line / animate / a pause), a hold on the first character
+  if the script ends on a pause, the title for its reading time,
+  auto_camera, the transition and review_movie. Characters without a voice
+  get different installed voices (preferred list first, then any English
+  voice from `say -v ?`). The pie movie (26 s, two scenes) took two calls.
+* auto_camera penalises a shot where another actor covers over 45% of the
+  frame (someone pressed against the lens), and the framing score drops
+  faster for subjects bigger than ideal than for ones a little small.
 * `review_movie` (reviewcmd.cpp; rules in review.cpp, unit tested) steps
   every frame of each scene without rendering to track movement, action
   changes, sound starts, cuts and text visibility, then renders every third

@@ -19,6 +19,7 @@ use tokio::sync::Mutex;
 
 use crate::bridge::{BridgeClient, BridgeError};
 use crate::launcher;
+use crate::script;
 use crate::speech;
 use crate::tools::{all_tools, Kind, ToolSpec, WORKFLOW_GUIDE};
 use crate::video;
@@ -115,6 +116,12 @@ impl ThreeDmmServer {
         args: Value,
         timeout: Duration,
     ) -> anyhow::Result<Vec<ContentBlock>> {
+        let result = self.speak_line_value(args, timeout).await?;
+        Ok(vec![ContentBlock::text(result.to_string())])
+    }
+
+    /// speak_line's work, returning its result for callers that build on it
+    async fn speak_line_value(&self, args: Value, timeout: Duration) -> anyhow::Result<Value> {
         let text = args
             .get("text")
             .and_then(Value::as_str)
@@ -196,6 +203,188 @@ impl ThreeDmmServer {
                 }
             }
         }
+        Ok(result)
+    }
+
+    /// Builds a whole scene from a script: set, cast, blocking, every line in
+    /// order, title, camera cuts and transition, then reviews it.
+    async fn script_scene(
+        &self,
+        args: Value,
+        timeout: Duration,
+    ) -> anyhow::Result<Vec<ContentBlock>> {
+        let mut script = script::parse(&args).map_err(anyhow::Error::msg)?;
+        script::assign_voices(&mut script.cast, &speech::installed_voices().await);
+        // Each step's failure names the step, so the caller knows what exists
+        let step = |what: String| {
+            move |err: anyhow::Error| anyhow::anyhow!("{what}: {}", describe_error(&err))
+        };
+
+        let state = self.bridge_call("get_state", json!({}), timeout).await?;
+        let mut notes: Vec<String> = Vec::new();
+        if state["movie"]["scene_count"].as_i64().unwrap_or(0) > 0 {
+            self.bridge_call(
+                "checkpoint",
+                json!({"name": "before script_scene"}),
+                timeout,
+            )
+            .await
+            .map_err(step("checkpoint".into()))?;
+            notes.push(
+                "restore_checkpoint(\"before script_scene\") goes back to the movie as it was"
+                    .into(),
+            );
+        }
+
+        let mut add = json!({"background": script.background});
+        if let Some(camera) = script.camera {
+            add["camera"] = json!(camera);
+        }
+        let scene = self
+            .bridge_call("add_scene", add, timeout)
+            .await
+            .map_err(step("add_scene".into()))?;
+        let scene_index = scene["scene_index"].clone();
+        for member in &script.cast {
+            self.bridge_call(
+                "add_actor",
+                json!({"template": member.actor, "name": member.name}),
+                timeout,
+            )
+            .await
+            .map_err(step(format!(
+                "casting {} as '{}'",
+                member.name, member.actor
+            )))?;
+        }
+        let arranged = self
+            .bridge_call(
+                "arrange_actors",
+                json!({"layout": script.layout, "frame": 1}),
+                timeout,
+            )
+            .await
+            .map_err(step("arrange_actors".into()))?;
+        if let Some(framing) = arranged["framing"].as_str() {
+            notes.push(format!("blocking: {framing}"));
+        }
+
+        // The lines, one after another
+        let mut frame: i64 = 1;
+        let mut played = Vec::new();
+        for (i, line) in script.lines.iter().enumerate() {
+            match line {
+                script::Line::Say { who, text, action } => {
+                    let mut a = json!({"actor": who, "text": text, "frame": frame});
+                    if let Some(voice) = script
+                        .cast
+                        .iter()
+                        .find(|c| &c.name == who)
+                        .and_then(|c| c.voice.clone())
+                    {
+                        a["voice"] = json!(voice);
+                    }
+                    if let Some(action) = action {
+                        a["action"] = action.clone();
+                    }
+                    let r = self
+                        .speak_line_value(a, timeout)
+                        .await
+                        .map_err(step(format!("lines[{i}] ({who} says)")))?;
+                    let end = r["end_frame"].as_i64().unwrap_or(frame + 6);
+                    played.push(
+                        json!({"line": i, "who": who, "says": text, "from": frame, "to": end - 1}),
+                    );
+                    if let Some(note) = r["note"].as_str() {
+                        notes.push(format!("lines[{i}]: {note}"));
+                    }
+                    frame = end;
+                }
+                script::Line::Do {
+                    who,
+                    action,
+                    seconds,
+                } => {
+                    let r = self
+                        .bridge_call(
+                            "animate",
+                            json!({"actor": who, "action": action, "seconds": seconds, "frame": frame}),
+                            timeout,
+                        )
+                        .await
+                        .map_err(step(format!("lines[{i}] ({who} does {action})")))?;
+                    let end = r["end_frame"].as_i64().unwrap_or(frame + 6);
+                    played.push(json!({"line": i, "who": who, "does": r["action"], "from": frame, "to": end - 1}));
+                    frame = end;
+                }
+                script::Line::Wait { seconds } => {
+                    frame += (seconds * 6.0).round().max(1.0) as i64;
+                }
+            }
+        }
+
+        // A closing pause needs something on stage to last that long
+        let now = self.bridge_call("get_state", json!({}), timeout).await?;
+        let last = now["movie"]["scene"]["last_frame"]
+            .as_i64()
+            .unwrap_or(frame);
+        if last < frame - 1 {
+            self.bridge_call(
+                "animate",
+                json!({"actor": script.cast[0].name, "action": 0, "frames": frame - 1 - last, "frame": last}),
+                timeout,
+            )
+            .await
+            .map_err(step("holding the final pause".into()))?;
+        }
+
+        if let Some(title) = &script.title {
+            let until = 1 + (script::title_seconds(title) * 6.0).ceil() as i64;
+            self.bridge_call(
+                "add_text",
+                json!({"text": title, "kind": "caption", "rect": "top", "frame": 1, "until_frame": until}),
+                timeout,
+            )
+            .await
+            .map_err(step("title".into()))?;
+        }
+        let mut shots = Value::Null;
+        if script.camera_style != "none" {
+            let cut = self
+                .bridge_call(
+                    "auto_camera",
+                    json!({"scene": scene_index, "style": script.camera_style}),
+                    timeout,
+                )
+                .await
+                .map_err(step("auto_camera".into()))?;
+            shots = cut["shots"].clone();
+        }
+        if let Some(transition) = &script.transition {
+            self.bridge_call("set_transition", json!({"transition": transition}), timeout)
+                .await
+                .map_err(step("set_transition".into()))?;
+        }
+        let review = self
+            .bridge_call("review_movie", json!({"scene": scene_index}), timeout)
+            .await
+            .map_err(step("review_movie".into()))?;
+
+        let cast: Vec<Value> = script
+            .cast
+            .iter()
+            .map(|c| json!({"name": c.name, "actor": c.actor, "voice": c.voice}))
+            .collect();
+        let result = json!({
+            "scene_index": scene_index,
+            "frames": frame - 1,
+            "seconds": ((frame - 1) as f64 / 6.0 * 10.0).round() / 10.0,
+            "cast": cast,
+            "lines": played,
+            "shots": shots,
+            "review": {"verdict": review["verdict"], "issues": review["issues"]},
+            "notes": notes,
+        });
         Ok(vec![ContentBlock::text(result.to_string())])
     }
 
@@ -272,6 +461,7 @@ impl ThreeDmmServer {
                 Ok(vec![ContentBlock::text(result.to_string())])
             }
             Kind::SpeakLine => self.speak_line(args, timeout).await,
+            Kind::ScriptScene => self.script_scene(args, timeout).await,
             Kind::BridgeImage(cmd) => {
                 let result = self.bridge_call(cmd, args, timeout).await?;
                 let path = result
