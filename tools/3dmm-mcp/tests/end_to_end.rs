@@ -334,7 +334,10 @@ async fn builds_saves_and_reopens_a_two_scene_movie() -> Result<()> {
             json!({"dir": palette_dir, "scene": iscen, "from": 1, "to": 1}),
         )
         .await?;
-    let exported_png = exported["sample_paths"][0].as_str().context("sample_paths")?.to_string();
+    let exported_png = exported["sample_paths"][0]
+        .as_str()
+        .context("sample_paths")?
+        .to_string();
     s.call("select_scene", json!({"index": iscen})).await?;
     let direct_png = palette_dir.join("direct.png");
     s.call("render_frame", json!({"frame": 1, "path": direct_png}))

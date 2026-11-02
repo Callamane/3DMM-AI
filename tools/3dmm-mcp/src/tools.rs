@@ -626,6 +626,7 @@ pub fn all_tools() -> Vec<ToolSpec> {
                     "bold": {"type": "boolean"},
                     "italic": {"type": "boolean"},
                     "underline": {"type": "boolean"},
+                    "align": {"type": "string", "enum": ["left", "center", "right"], "description": "Default: center for the top/bottom/center presets, left otherwise."},
                     "frame": frame_prop(),
                     "until_frame": {"type": "integer", "description": "First frame where the text is gone."}
                 }),
@@ -635,13 +636,14 @@ pub fn all_tools() -> Vec<ToolSpec> {
         bridge(
             "edit_text",
             "Change an existing text box (index from describe_scene/describe_timeline): replace its text and/or \
-             change its colour and size. The box keeps its place and timing.",
+             change its colour, size and alignment. The box keeps its place and timing.",
             obj(
                 json!({
                     "index": {"type": "integer", "minimum": 0},
                     "text": {"type": "string"},
                     "color": {"description": "\"#rrggbb\", a colour name, or [r,g,b]."},
-                    "size": {"type": "integer", "minimum": 6, "maximum": 200}
+                    "size": {"type": "integer", "minimum": 6, "maximum": 200},
+                    "align": {"type": "string", "enum": ["left", "center", "right"]}
                 }),
                 &["index"],
             ),

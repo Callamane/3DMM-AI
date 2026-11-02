@@ -197,6 +197,35 @@ static bool _FInsertText(PTBOX ptbox, const std::string &strText, int32_t cp, PC
     return fTrue;
 }
 
+// Parses an "align" argument ("left", "center", "right"); *pjc is left alone
+// when the argument is absent
+static bool _FAlignArg(Request &req, int32_t *pjc)
+{
+    if (!req.FHasArg("align"))
+        return fTrue;
+    std::string strAlign;
+    if (!req.FArgString("align", &strAlign))
+        return fFalse;
+    strAlign = StrLower(strAlign);
+    if (strAlign == "left")
+        *pjc = jcLeft;
+    else if (strAlign == "center" || strAlign == "centre")
+        *pjc = jcCenter;
+    else if (strAlign == "right")
+        *pjc = jcRight;
+    else
+        return req.Fail(kszErrBadArgs, "'align' must be \"left\", \"center\" or \"right\"");
+    return fTrue;
+}
+
+static bool _FApplyAlign(PTBOX ptbox, int32_t jc)
+{
+    PAP pap;
+    ptbox->FetchPap(0, &pap);
+    pap.jc = static_cast<uint8_t>(jc);
+    return ptbox->FApplyPap(0, ptbox->CpMac(), &pap, pvNil);
+}
+
 static bool _FCmdAddText(Request &req)
 {
     PMVIE pmvie;
@@ -274,6 +303,13 @@ static bool _FCmdAddText(Request &req)
     ACR acrBox = kacrClear;
     if (req.FHasArg("background") && !_FParseColor(req, req.args.Get("background"), &acrBox))
         return fFalse;
+    // Titles and subtitles placed with a preset read best centred
+    const Json &jsonRect = req.args.Get("rect");
+    std::string strRect = jsonRect.IsString() ? StrLower(jsonRect.AsString()) : (fStory ? "bottom" : "full");
+    int32_t jc =
+        strRect == "top" || strRect == "bottom" || strRect == "center" || strRect == "middle" ? jcCenter : jcLeft;
+    if (!_FAlignArg(req, &jc))
+        return fFalse;
     int32_t nfrmUntil = ivNil;
     if (req.FHasArg("until_frame"))
     {
@@ -299,6 +335,8 @@ static bool _FCmdAddText(Request &req)
     bool fOk = _FInsertText(ptbox, strText, 0, &chp);
     if (fOk && acrBox != kacrClear)
         fOk = ptbox->FSetAcrBack(acrBox);
+    if (fOk && jc != jcLeft)
+        fOk = _FApplyAlign(ptbox, jc);
     if (!fOk)
     {
         pscen->FRemTboxCore(ptbox);
@@ -342,6 +380,7 @@ static bool _FCmdAddText(Request &req)
     req.result.Set("text_box_index", itbox);
     req.result.Set("kind", fStory ? "caption" : "scrolling");
     req.result.Set("rect", jsonRc);
+    req.result.Set("align", jc == jcCenter ? "center" : (jc == jcRight ? "right" : "left"));
     req.result.Set("first_frame", nfrmStart);
     req.result.Set("until_frame", nfrmUntil == ivNil ? Json("end of scene") : Json(nfrmUntil));
     return fTrue;
@@ -388,6 +427,9 @@ static bool _FCmdEditText(Request &req)
             return req.Fail(kszErrBadArgs, "'size' must be between 6 and 200 (pixels)");
         chp.dypFont = dypFont;
     }
+    int32_t jc = ivNil;
+    if (!_FAlignArg(req, &jc))
+        return fFalse;
 
     bool fOk;
     if (req.FHasArg("text"))
@@ -402,6 +444,8 @@ static bool _FCmdEditText(Request &req)
     {
         fOk = ptbox->FApplyChp(0, ptbox->CpMac() - 1, &chp);
     }
+    if (fOk && jc != ivNil)
+        fOk = _FApplyAlign(ptbox, jc);
     if (!fOk)
         return FFailEngine(req, "could not change the text");
     pmvie->SetDirty();

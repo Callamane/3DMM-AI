@@ -483,6 +483,9 @@ on the way:
 * `storyboard(all_scenes: true)` shares the cells out across scenes by
   length (at least one each) and maps cells from sets with other palettes
   onto the first cell's palette.
+* Text alignment uses `TXRD::FApplyPap` (paragraph `jc`), part of the
+  stock rich-text format: the stock build shows aligned text the same way.
+  Captions placed with the top/bottom/center presets default to centred.
 * `review_movie` (reviewcmd.cpp; rules in review.cpp, unit tested) steps
   every frame of each scene without rendering to track movement, action
   changes, sound starts, cuts and text visibility, then renders every third
