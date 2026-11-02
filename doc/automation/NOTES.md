@@ -380,6 +380,48 @@ on the way:
 * Per-actor recordings replace later actions (stock semantics) → stated in
   `animate`/`speak_line`/`move_actor` descriptions.
 
+### Second round: making it easier for models
+
+* `render_frame overlay=true`: the stage grid is drawn into the captured
+  8-bit frame (`image8.cpp`: Bresenham lines, a 3x5 bitmap font, palette
+  colours chosen by nearest match) by projecting floor points through the
+  same camera model `describe_scene` uses; labels avoid each other.
+* `preview_cameras`: `BKGD::FSetCamera` on the scene's background (or a
+  background fetched just for the preview, with its own palette merged in
+  from `BKGD::FGetPalette`), world-only capture, 2x downscale, tiled. The
+  scene's camera is restored afterwards; no scene events are created.
+* `describe_timeline`: steps `SCEN::FGotoFrm` over the whole scene, sampling
+  each actor's on-stage state, action, freeze flag and body position, text
+  box visibility (`TBOX::FIsVisible`), actor sound events
+  (`ACTR::FSoundInFrm`) and scene sound events (`SCEN::FQuerySnd`).
+* Checkpoints use "Save a Copy" (`MVIE::FSaveToFni(pfni, fFalse)`): the CFL
+  is written to the copy, and the next edit moves the working CFL back to a
+  temp file (`_FUseTempFile`), so the copy is never modified. The copy is
+  named after the movie title because loading a file takes its title from
+  the file name. After a restore, `ForceSaveAs` detaches the movie from the
+  checkpoint file and `save_movie` defaults to the original path.
+* Ending pose: `FEndRecord` always freezes the actor, and `FSetActionCore`
+  re-freezes any action applied at the end of a path (`_FIsDoneAevSub`), so
+  "keep looping" isn't expressible. Default is now `then: "rest"` (action 0
+  when it's a rest action), which looks far more natural after dialogue.
+* Actor descriptions were written by rendering all 45 shipped actors.
+* `speak_line` always leaves the playhead at the end of the line, so
+  consecutive lines chain without explicit frames; actors with no Talk
+  action hold their rest pose for the line (which also keeps the scene long
+  enough for the audio). Found when two lines from non-talking actors
+  overlapped.
+* `list_actions` `travels` comes from the Studio's trailing `*` marker; the
+  step size alone is useless for this (stationary actions have a default
+  step of 2.5 units too).
+* Startup: automation sessions turn the startup sound off for that run,
+  which also skips the two 4-second logo pauses it times (14 s → 6 s to
+  ready). The first launch of a freshly rebuilt binary can take far longer
+  while macOS vets it; the MCP launcher waits up to 180 s.
+* Re-tested end to end through MCP with "a knight and a skeleton squabble
+  over a treasure chest in a cave" (preview_cameras, overlay blocking, batch,
+  speak_line for non-talking actors, checkpoint/restore, timeline); the
+  saved movie plays in the stock build.
+
 ## 13. Decisions
 
 * **Polling, not threads.** Non-blocking sockets serviced from

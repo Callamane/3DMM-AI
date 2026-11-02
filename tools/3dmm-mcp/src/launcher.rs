@@ -8,8 +8,10 @@ use anyhow::{bail, Context, Result};
 
 use crate::bridge::BridgeClient;
 
-/// How long to wait for a freshly started app to accept connections.
-const STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
+/// How long to wait for a freshly started app to accept connections. A normal
+/// start takes a few seconds, but macOS can take much longer to vet a
+/// freshly rebuilt binary the first time it runs.
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// Resolves the 3DMMEx executable.
 ///

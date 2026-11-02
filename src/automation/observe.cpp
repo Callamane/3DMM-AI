@@ -716,7 +716,10 @@ static bool _FCmdDescribeTimeline(Request &req)
             BRS xr, yr, zr;
             pglpactr->Get(ipactr, &pactr);
             pactr->Pbody()->GetPosition(&xr, &yr, &zr);
-            vecvecSamples[ipactr].push_back({pactr->FOnStage(), pactr->AnidCur(), pactr->FFrozen(),
+            // Frozen only matters for actions with more than one pose
+            int32_t ccel = 0;
+            pactr->Ptmpl()->FGetCcelActn(pactr->AnidCur(), &ccel);
+            vecvecSamples[ipactr].push_back({pactr->FOnStage(), pactr->AnidCur(), pactr->FFrozen() && ccel > 1,
                                              stage.FromWorld(Vec3(DFromBrs(xr), DFromBrs(yr), DFromBrs(zr)))});
             if (pactr->FSoundInFrm())
                 vecvecSoundFrames[ipactr].push_back(nfrm);

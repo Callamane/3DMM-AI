@@ -273,12 +273,19 @@ Json JsonActionList(PTMPL ptmpl)
         Json json = Json::MakeObject();
         ptmpl->FGetCcelActn(anid, &ccel);
         double dwrStep = _DwrAverageStep(ptmpl, anid, ccel);
+        std::string strName = StrActionName(ptmpl, anid);
+        // The Studio marks the travelling actions (walk, run, crawl...) with a
+        // trailing '*'; others play on the spot
+        bool fTravels = !strName.empty() && strName.back() == '*';
         json.Set("index", anid);
-        json.Set("name", StrActionName(ptmpl, anid));
+        json.Set("name", strName);
         json.Set("cels", ccel);
-        // Metres travelled per frame when this action is used for a path
-        json.Set("metres_per_frame", std::floor(dwrStep / kdwrPerMetre * 1000 + 0.5) / 1000);
-        json.Set("moves", dwrStep > 0);
+        json.Set("travels", fTravels);
+        if (fTravels)
+        {
+            // Metres covered per frame when this action follows a path
+            json.Set("metres_per_frame", std::floor(dwrStep / kdwrPerMetre * 1000 + 0.5) / 1000);
+        }
         jsonList.Push(json);
     }
     return jsonList;
@@ -376,6 +383,60 @@ static const struct
     {"GE-Black Background", "empty black stage (good for titles)"},
 };
 
+// What the shipped actors look like (checked by rendering each one), so a
+// client can cast without guessing from names.
+static const struct
+{
+    const char *pszName;
+    const char *pszDescription;
+} _rgtmpldesc[] = {
+    {"Alexander", "eccentric man: monocle, red lips, loud patterned shirt, green trousers"},
+    {"Augustin", "older man in brown clothes"},
+    {"Bella", "young woman, black hair, pink dress"},
+    {"Benedict", "green lizard-like creature in a #2 sports jersey"},
+    {"Billy", "big blond muscular man, red shirt with a fish logo"},
+    {"Bino BeGood", "young man, afro, red shirt, jeans"},
+    {"Bo", "huge muscular wrestler in red trunks"},
+    {"Bongo", "very large round man, red shirt"},
+    {"Charlie", "athletic man in a tank top and yellow basketball shorts"},
+    {"Christina", "woman with dark hair in a bun, floral outfit"},
+    {"Claudia", "woman, dark bob haircut, jacket and boots"},
+    {"Crash", "tall yellow crash-test-dummy robot"},
+    {"Eliza", "girl with brown hair, colourful clothes"},
+    {"Frank", "short stocky man, black hair, yellow plaid shirt"},
+    {"Gabriel", "baby in a nappy"},
+    {"Gregory", "teenage boy, yellow cap, yellow shirt, jeans"},
+    {"Gustave", "tall skinny man with glasses and big teeth, brown jacket"},
+    {"Henry", "knight in full armour holding a halberd"},
+    {"Hiro", "stocky man, blue shirt, purple trousers"},
+    {"Jeremy", "young red-haired runner in a #6 vest"},
+    {"Jerzy", "old sailor with a white beard and striped shirt"},
+    {"Josephine", "woman with green leafy hair, yellow dress"},
+    {"Kim", "girl with short black hair"},
+    {"Maribella", "blonde girl, purple cap, green striped dress"},
+    {"Martha", "older woman, red hair, leopard print, #5 shirt"},
+    {"Michael", "boy with black hair, striped shirt, jeans"},
+    {"Mimi", "girl in a pink sweater"},
+    {"Nakita", "young woman with a ponytail, white top, red checked trousers"},
+    {"Patrick", "bearded man in sunglasses and a checked shirt"},
+    {"Ramu", "man with curly hair and a moustache, beige robe"},
+    {"Randolph", "big man in a red striped suit"},
+    {"Roxanne", "blonde woman with a braid, white outfit"},
+    {"S'kelly", "walking skeleton"},
+    {"Salvador", "boy in a purple patterned shirt and shorts"},
+    {"Sebastian", "man in a blue cap and #7 jersey"},
+    {"Slam", "punk man with a mohawk"},
+    {"Timothy", "man with a quiff, blue shirt"},
+    {"Valentine", "showman in a red coat and hat with a star"},
+    {"Venie", "green-faced vampire in a white shirt"},
+    {"Wanda", "gold robot"},
+    {"Willy", "blue monster in a lab coat"},
+    {"Zack", "orange square-headed alien in a #8 purple shirt"},
+    {"Cathy Scratch", "cat (small)"},
+    {"Fabrice the Rat", "rat (small)"},
+    {"Sasha the Dog", "dog (small)"},
+};
+
 static Json _JsonEntry(const CatalogEntry &entry)
 {
     Json json = Json::MakeObject();
@@ -384,6 +445,14 @@ static Json _JsonEntry(const CatalogEntry &entry)
     if (entry.kind == ContentKind::Background)
     {
         for (auto &desc : _rgbkgddesc)
+        {
+            if (entry.name == desc.pszName)
+                json.Set("description", desc.pszDescription);
+        }
+    }
+    else if (entry.kind == ContentKind::Actor)
+    {
+        for (auto &desc : _rgtmpldesc)
         {
             if (entry.name == desc.pszName)
                 json.Set("description", desc.pszDescription);

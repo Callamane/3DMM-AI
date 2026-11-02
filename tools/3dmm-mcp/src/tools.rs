@@ -196,8 +196,10 @@ pub fn all_tools() -> Vec<ToolSpec> {
         ),
         bridge(
             "list_templates",
-            "List actors (people/creatures that walk and act) and props (objects). Actors differ a lot in what they \
-             can do (some cannot talk or run), so check list_actions before casting. Use the id or name with \
+            "List actors (people/creatures that walk and act, each with a short description of how they look) \
+             and props (objects). filter matches names and descriptions (e.g. \"man\", \"robot\"). Actors differ \
+             a lot in what they can do (some cannot talk or run), so check list_actions before casting. Use the \
+             id or name with \
              add_actor.",
             obj(
                 json!({
@@ -209,9 +211,9 @@ pub fn all_tools() -> Vec<ToolSpec> {
         ),
         bridge(
             "list_actions",
-            "List what an actor or prop can do (walk, run, dance, wave, talk, ...). metres_per_frame is how far \
-             the action travels per frame when used on a path; actions marked * in the name are the walking/running \
-             family.",
+            "List what an actor or prop can do. travels=true marks the walking/running family (shown with * in \
+             their names; use them with move_actor, and metres_per_frame says how fast they go); the rest are done \
+             on the spot with animate or speak_line (talk, laugh, dance, ...).",
             obj(json!({"template": {"type": "string", "description": "Template id or name."}}), &["template"]),
         ),
         bridge(
@@ -389,7 +391,7 @@ pub fn all_tools() -> Vec<ToolSpec> {
                 "Make an actor travel along a path starting at the current frame (or 'frame'), using a moving \
                  action such as walk or run. The actor turns to face where it is going, walks through each \
                  waypoint in order and stops at the last one. Speed comes from the action (see \
-                 metres_per_frame in list_actions); the result reports how many frames it took, and the \
+                 metres_per_frame in list_actions; pick an action with travels=true); the result reports how many frames it took, and the \
                  scene's current frame ends at the arrival frame. Recording replaces any later path the actor \
                  had. pause_frames on a waypoint makes it mark time there. Afterwards the actor goes to its rest \
                  pose (then=\"freeze\" holds the last stride instead). Tip: render_frame with overlay=true \
@@ -556,8 +558,9 @@ pub fn all_tools() -> Vec<ToolSpec> {
             Kind::SpeakLine,
             "Give an actor a line of dialogue: synthesizes the text as speech on this computer, imports it into \
              the movie, plays it on the actor at the current frame (or 'frame') and, unless action is \"none\", \
-             makes the actor perform a talking action on the spot for exactly as long as the line lasts. Returns \
-             the line's length and end_frame so you can start the next line there. Give different characters \
+             makes the actor perform a talking action on the spot for exactly as long as the line lasts. The \
+             scene's current frame ends at the line's end, so consecutive speak_line calls without 'frame' play \
+             one after another (end_frame is also returned). Actors that can't talk stand still while speaking. Give different characters \
              different voices. There is no lip sync in 3D Movie Maker; the talking action stands in for it. Like \
              animate, it replaces what the actor did after the start frame, so script each actor in time order. \
              Voices (macOS): e.g. Fred, Ralph, Albert, Daniel, Junior, Kathy, Samantha, Bad News, Whisper.",
@@ -566,7 +569,7 @@ pub fn all_tools() -> Vec<ToolSpec> {
                     "actor": actor_ref("Who says it."),
                     "text": {"type": "string", "description": "The line, as it should be spoken."},
                     "voice": {"type": "string", "description": "Speech voice name (default: the system voice)."},
-                    "action": {"type": ["string", "integer"], "description": "Talking action, e.g. \"Talk\" or \"Yell\" (default \"Talk\"; \"none\" to leave the actor alone)."},
+                    "action": {"type": ["string", "integer"], "description": "Talking action, e.g. \"Talk\" or \"Yell\" (default \"Talk\"; \"none\" to leave the actor alone, e.g. talking while walking)."},
                     "then": {"type": "string", "enum": ["rest", "freeze"], "default": "rest", "description": "Afterwards: return to the rest pose, or hold the last pose."},
                     "frame": frame_prop()
                 }),
@@ -713,22 +716,23 @@ pub fn all_tools() -> Vec<ToolSpec> {
 /// Short workflow guide, served as an MCP resource and prompt.
 pub const WORKFLOW_GUIDE: &str = r#"# Making a movie with 3D Movie Maker
 
-1. **Catalog** — `list_backgrounds` (pick a set and camera), `list_templates` (actors and props), `list_actions` for each actor you'll use, `list_sounds`.
-2. **Scene** — `add_scene(background, camera)`. A new movie has no scenes; add one before anything else. Each scene has its own frame numbers starting at 1. The movie runs at 6 frames per second.
-3. **Actors** — `add_actor(template, position, facing, name)`. Positions are stage metres: x right/left, z away/toward the camera, origin = the set's default spot. Check `describe_scene` → camera.visible_floor for what's in shot.
-4. **Motion and acting** —
-   - `move_actor(actor, path=[{x,z},...], action="Walk Fast")` walks a path from the current frame and reports the arrival frame.
-   - `animate(actor, action, seconds)` does an action on the spot (talking, laughing, dancing) and extends the scene.
-   - `set_action` changes the action from a frame on; `rotate_actor` turns.
-   - Edits happen at the scene's current frame: use the `frame` argument (or `goto_frame`) to place things in time. Actors stay on stage until the scene ends.
-5. **Sound and text** — `attach_sound(sound, target=actor|"scene", frame)`; `import_sound(path)` for your own WAV/MP3 (e.g. `say -o line.wav --data-format=LEI16@22050 "Hello"` on macOS). `add_text(text, kind="caption", rect="bottom", frame, until_frame)` for titles and subtitles.
-6. **Check** — `render_frame(frame)` shows you the picture; fix framing with `place_actor` or `set_camera`. `describe_scene` lists everyone's position and lifetime.
-7. **More scenes** — `add_scene` again; `set_transition` on the earlier scene for a fade/dissolve.
-8. **Save** — `save_movie(path=".../name.3mm")`. Optionally `export_frames` for a PNG sequence, or `play(from_start=true)` to watch it in the app.
+1. **Plan** — movies run at 6 frames per second; a 30 s movie is ~180 frames across all scenes. Each scene has its own frame numbers from 1 and lasts as long as its longest-living actor.
+2. **Pick a set** — `list_backgrounds` (each has a description; `filter: "diner"` works). `preview_cameras(background)` shows every camera angle on one image without changing the movie.
+3. **Scene** — `add_scene(background, camera)`. A new movie has no scenes; add one before anything else.
+4. **Cast** — `list_templates(type: "actor")` lists actors with a description of how they look; check `list_actions(template)` before casting (some can't talk or run; names vary, e.g. "Walk Fast *").
+5. **Block** — `add_actor(template, position, facing, name)`. Positions are stage metres relative to the camera: x right/left, z away/toward, origin = the set's default spot. `render_frame(overlay: true)` draws the floor grid (X=/Z= lines every metre) and labels actors, so you can see exactly where positions land and whether furniture hides someone.
+6. **Act** — work through each actor in time order (recording at a frame replaces what that actor did afterwards):
+   - `move_actor(actor, path: [{x,z},...], action: "Walk Fast")` walks from the current frame and reports the arrival frame.
+   - `speak_line(actor, text, voice, action: "Talk")` synthesizes the line, attaches it, and acts it for exactly its length; chain lines using the returned `end_frame`. Give each character its own voice.
+   - `animate(actor, action, seconds)` does an action on the spot (laugh, dance, think) and extends the scene.
+   - Actors return to their rest pose afterwards (`then: "freeze"` to hold the last pose).
+7. **Camera and text** — `set_camera(camera, frame)` cuts within a scene. `add_text(text, kind: "caption", rect: "top"|"bottom"|"center", frame, until_frame, size, color)` for titles and subtitles.
+8. **Check** — `describe_timeline` summarises who does what when (cameras, actions, movement, text, sounds). `render_frame(frame)` shows a frame. `get_state(all_scenes: true)` gives every scene's length and the total.
+9. **More scenes** — `add_scene` again (actors belong to one scene; add them again); `set_transition("dissolve")` on the earlier scene.
+10. **Save** — `save_movie(path: ".../name.3mm")`. Optionally `export_frames` (PNG sequence) or `play(from_start: true, wait: true)`.
 
-Tips
-- Lengths: a scene lasts as long as its longest-living actor. A 30 s movie at 6 fps is 180 frames across all scenes.
-- Speed comes from the action: "Walk Slowly" < "Walk Fast" < "Run" (names vary by actor; check list_actions). Bigger actors step further.
-- Dialogue: there is no lip sync; animate the speaker with a talking/gesturing action while the speech sound plays, and add a caption.
-- One level of undo; saving clears it.
+Safety and speed
+- There is one level of undo. Before something risky, `checkpoint(name)`; `restore_checkpoint(name)` goes back.
+- `batch(steps: [{tool, args}, ...])` runs several calls at once once you know what you want.
+- No lip sync exists in 3D Movie Maker; talking actions stand in for it.
 "#;

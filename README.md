@@ -133,7 +133,8 @@ Windows: the bridge is written to be portable (Winsock on Windows, BSD sockets e
 
 Start 3DMMEx with `--automation` (port 7341) or `--automation=PORT`, or set the environment variable
 `THREEDMM_AUTOMATION=1` (or a port number). The app logs `automation: listening on 127.0.0.1:PORT` to stderr,
-skips the building/intro, opens the Studio with a new movie and runs in a window for that session. Only one client
+skips the building/intro, logo pauses and startup jingle, opens the Studio with a new movie and runs in a window
+for that session (about 6 s from launch to ready). Only one client
 may connect at a time.
 
 ### Protocol
@@ -155,12 +156,13 @@ actors by numeric id or name.
 
 | Group | Tools |
 |---|---|
-| Session | `launch`, `get_state`, `goto_studio`, `new_movie`, `open_movie`, `save_movie`, `undo`, `redo` |
-| Catalog | `list_backgrounds` (with cameras and descriptions), `list_cameras`, `list_templates`, `list_actions`, `list_costumes`, `list_materials`, `list_sounds`, `list_3d_word_styles` |
+| Session | `launch`, `get_state` (`all_scenes` for total length), `goto_studio`, `new_movie`, `open_movie`, `save_movie`, `undo`, `redo`, `checkpoint`, `restore_checkpoint`, `list_checkpoints` |
+| Catalog | `list_backgrounds` (with cameras and descriptions), `list_cameras`, `list_templates` (actors described by look), `list_actions`, `list_costumes`, `list_materials`, `list_sounds`, `list_3d_word_styles` |
 | Scenes | `add_scene`, `set_background`, `select_scene`, `set_camera`, `set_transition`, `delete_scene`, `goto_frame`, `add_pause` |
 | Actors | `add_actor`, `add_3d_word`, `select_actor`, `remove_actor`, `set_action`, `move_actor` (walk a path), `animate` (act on the spot for a duration), `place_actor`, `rotate_actor`, `scale_actor`, `set_costume`, `set_name`, `actor_lifetime` |
 | Text and sound | `add_text`, `import_sound`, `attach_sound`, `speak_line` (MCP only: text-to-speech dialogue, attached and acted) |
-| Observe and play | `describe_scene`, `render_frame` (returns the image), `export_frames` (PNG sequence), `play`, `stop` |
+| Observe and play | `describe_scene`, `describe_timeline` (who does what when), `render_frame` (returns the image; `overlay` draws the stage grid and actor labels), `preview_cameras` (every angle of a set on one image), `export_frames` (PNG sequence), `play`, `stop` |
+| MCP only | `batch` (several calls in one) |
 
 The bridge also has `hello` and `quit`. The MCP server publishes a workflow guide as the resource
 `3dmm://guide/workflow` and a `make_movie` prompt.
@@ -181,6 +183,7 @@ second, numbered per scene from 1.
   frames a path took rather than taking a target duration.
 * No lip sync (the engine has none); `speak_line` pairs speech with a talking action.
 * Recording an action or path for an actor replaces what that actor did after that frame, as in the Studio.
+  Actions end in the rest pose (or frozen); an action can't be left looping past the end of a recording.
 * Rendered frames are 8-bit, 544×306, like the Studio's view.
 * Debug builds show assertion dialogs that block automation until dismissed; use a release build unattended.
 * Only one copy of 3DMMEx can run at a time.

@@ -262,6 +262,12 @@ bool APP::_FInit(uint32_t grfapp, uint32_t grfgob, int32_t ginDef)
 
     _ParseCommandLine();
 
+#ifdef AUTOMATION
+    // Automation sessions skip the startup jingle and the logo pauses it times
+    if (FAutomationEnabled())
+        fStartupSound = fFalse;
+#endif // AUTOMATION
+
     // If _ParseCommandLine doesn't set _stnProduct, set to 3dMovieMaker
     if (!_FEnsureProductNames())
     {

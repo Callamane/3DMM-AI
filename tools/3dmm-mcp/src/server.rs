@@ -25,8 +25,9 @@ use crate::tools::{all_tools, Kind, ToolSpec, WORKFLOW_GUIDE};
 const GUIDE_URI: &str = "3dmm://guide/workflow";
 
 const INSTRUCTIONS: &str = "Tools for making movies in Microsoft 3D Movie Maker (1995) through its automation \
-bridge. Typical order: list_backgrounds -> add_scene -> list_templates -> add_actor -> move_actor/animate -> \
-attach_sound/add_text -> render_frame to check -> save_movie. Read the resource 3dmm://guide/workflow for details. \
+bridge. Typical order: list_backgrounds/preview_cameras -> add_scene -> list_templates/list_actions -> add_actor -> \
+render_frame(overlay) to block -> move_actor/speak_line/animate per actor in time order -> add_text -> \
+describe_timeline and render_frame to check -> save_movie. Read the resource 3dmm://guide/workflow for details. \
 The app starts automatically on the first call.";
 
 pub struct ThreeDmmServer {
@@ -120,7 +121,8 @@ impl ThreeDmmServer {
             .to_string();
         let voice = args.get("voice").and_then(Value::as_str);
         let actor = args.get("actor").cloned().unwrap_or(Value::Null);
-        let action = args.get("action").cloned().unwrap_or_else(|| json!("Talk"));
+        let action_given = args.get("action").cloned();
+        let action = action_given.clone().unwrap_or_else(|| json!("Talk"));
 
         let wav = speech::synthesize(&text, voice).await?;
         let seconds = speech::wav_seconds(&wav)?;
@@ -151,25 +153,45 @@ impl ThreeDmmServer {
             "frames": frames,
             "end_frame": start + frames,
         });
-        if action.as_str().map(str::to_lowercase).as_deref() != Some("none") {
-            let animated = self
-                .bridge_call(
-                    "animate",
-                    json!({
-                        "actor": actor,
-                        "action": action,
-                        "frames": frames,
-                        "frame": start,
-                        "then": args.get("then").cloned().unwrap_or_else(|| json!("rest")),
-                    }),
-                    timeout,
-                )
-                .await;
-            match animated {
+        let then = args.get("then").cloned().unwrap_or_else(|| json!("rest"));
+        let animate = |action: Value| json!({"actor": actor, "action": action, "frames": frames, "frame": start, "then": then});
+        if action.as_str().map(str::to_lowercase).as_deref() == Some("none") {
+            // The actor is left alone (e.g. it is walking meanwhile); move the
+            // playhead past the line so the next one follows it
+            let moved = self
+                .bridge_call("goto_frame", json!({"frame": start + frames}), timeout)
+                .await?;
+            let last = moved["last_frame"].as_i64().unwrap_or(start + frames);
+            if last < start + frames {
+                result["note"] = json!(format!(
+                    "the scene currently ends at frame {last}, so this line will be cut off unless something in \
+                     the scene lasts until frame {}",
+                    start + frames
+                ));
+            }
+        } else {
+            match self
+                .bridge_call("animate", animate(action.clone()), timeout)
+                .await
+            {
                 Ok(animated) => result["action"] = animated["action"].clone(),
+                Err(err) if action_given.is_none() => {
+                    // Not every actor can talk: hold the rest pose for the
+                    // line instead, which also keeps the scene long enough
+                    self.bridge_call("animate", animate(json!(0)), timeout)
+                        .await?;
+                    result["action"] = json!("At Rest");
+                    result["note"] = json!(format!(
+                        "this actor has no Talk action, so it stands still while speaking ({}); pass 'action' \
+                         with one of its actions (list_actions) to animate it",
+                        describe_error(&err)
+                    ));
+                }
                 Err(err) => {
                     // The line is in; say why the acting part didn't happen
-                    result["action_error"] = json!(format!("{err:#}"));
+                    result["action_error"] = json!(describe_error(&err));
+                    self.bridge_call("goto_frame", json!({"frame": start + frames}), timeout)
+                        .await?;
                 }
             }
         }
