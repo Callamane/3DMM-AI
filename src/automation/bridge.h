@@ -161,6 +161,14 @@ bool FFailEngine(Request &req, const std::string &strWhat);
 // The text of a text box (\r line breaks become \n; long text is cut short)
 std::string StrTboxText(PTBOX ptbox);
 
+// The system palette with pbkgd's palette merged in, as the scene renders
+// (the engine merges it only when the scene is drawn). Caller releases.
+PGL PglclrScene(PBKGD pbkgd);
+// Makes the screen palette the current scene's, as MVIE::DoTrans does when
+// it draws a new scene. 8-bit blits between surfaces convert through the
+// screen palette, so captures right after a scene switch need this.
+void UseScenePalette(PMVIE pmvie);
+
 void RefreshViews(PMVIE pmvie);
 // Renders the 3D world for the current frame so actor screen bounds are current
 void EnsureRendered(PMVIE pmvie);

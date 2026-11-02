@@ -468,10 +468,44 @@ void EnsureRendered(PMVIE pmvie)
     pmvie->Pbwld()->Render();
 }
 
+// The colours the scene renders with: the system palette with the scene's
+// background palette merged in. The engine only merges it on screen, in
+// MVIE::DoTrans, so the system palette still holds the previous set's
+// colours after a scene switch that hasn't been drawn yet. Caller releases.
+PGL PglclrScene(PBKGD pbkgd)
+{
+    PGL pglclr = GPT::PglclrGetPalette();
+    PGL pglclrBkgd = pvNil;
+    int32_t iclrMin;
+    if (pglclr != pvNil && pbkgd != pvNil && pbkgd->FGetPalette(&pglclrBkgd, &iclrMin) && pglclrBkgd != pvNil &&
+        iclrMin >= 0 && iclrMin + pglclrBkgd->IvMac() <= pglclr->IvMac())
+    {
+        CopyPb(pglclrBkgd->QvGet(0), pglclr->QvGet(iclrMin), LwMul(SIZEOF(CLR), pglclrBkgd->IvMac()));
+    }
+    ReleasePpo(&pglclrBkgd);
+    return pglclr;
+}
+
+void UseScenePalette(PMVIE pmvie)
+{
+    if (pmvie == pvNil || pmvie->Pscen() == pvNil)
+        return;
+    PGL pglclrSystem = GPT::PglclrGetPalette();
+    PGL pglclrScene = PglclrScene(pmvie->Pscen()->Pbkgd());
+    if (pglclrSystem != pvNil && pglclrScene != pvNil &&
+        !FEqualRgb(pglclrSystem->QvGet(0), pglclrScene->QvGet(0), LwMul(SIZEOF(CLR), pglclrScene->IvMac())))
+    {
+        GPT::SetActiveColors(pglclrScene, fpalIdentity);
+    }
+    ReleasePpo(&pglclrSystem);
+    ReleasePpo(&pglclrScene);
+}
+
 void RefreshViews(PMVIE pmvie)
 {
     if (pmvie == pvNil)
         return;
+    UseScenePalette(pmvie);
     pmvie->Pbwld()->MarkDirty();
     pmvie->InvalViewsAndScb();
 }

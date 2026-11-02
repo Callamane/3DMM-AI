@@ -273,7 +273,10 @@ async fn builds_saves_and_reopens_a_two_scene_movie() -> Result<()> {
     let review = s.call("review_movie", json!({})).await?;
     ensure!(review["summary"]["scenes"] == 3, "{review}");
     for issue in review["issues"].as_array().context("issues")? {
-        ensure!(issue["message"].is_string() && issue["fix"].is_string(), "{issue}");
+        ensure!(
+            issue["message"].is_string() && issue["fix"].is_string(),
+            "{issue}"
+        );
     }
 
     // ---- Video: frames and audio cues, then ffmpeg (skipped without ffmpeg)
@@ -316,6 +319,31 @@ async fn builds_saves_and_reopens_a_two_scene_movie() -> Result<()> {
         )
         .await?;
     ensure!(played["finished"] == true, "{played}");
+
+    // ---- A set with its own palette, exported without being on screen
+    // first, must match a render made after the screen showed it
+    s.call("add_scene", json!({"background": "HH-Dining"}))
+        .await?;
+    let iscen = 3;
+    s.call("select_scene", json!({"index": 0})).await?;
+    let palette_dir = out.join("palette");
+    std::fs::create_dir_all(&palette_dir)?;
+    let exported = s
+        .call(
+            "export_frames",
+            json!({"dir": palette_dir, "scene": iscen, "from": 1, "to": 1}),
+        )
+        .await?;
+    let exported_png = exported["sample_paths"][0].as_str().context("sample_paths")?.to_string();
+    s.call("select_scene", json!({"index": iscen})).await?;
+    let direct_png = palette_dir.join("direct.png");
+    s.call("render_frame", json!({"frame": 1, "path": direct_png}))
+        .await?;
+    ensure!(
+        std::fs::read(&exported_png)? == std::fs::read(&direct_png)?,
+        "{exported_png} differs from {}",
+        direct_png.display()
+    );
 
     println!("movie: {}", movie.display());
     s.call("quit", json!({"discard_changes": true})).await?;

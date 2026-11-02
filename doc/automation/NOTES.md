@@ -470,6 +470,19 @@ on the way:
   `BODY` screen bounds are current, and ranks cameras by actors fully in
   shot, then by on-screen size near half the frame height, then centring.
   It can't detect occlusion by set pieces.
+* Palettes: each set may carry its own palette entries, which the engine
+  merges into the screen palette only when it draws the scene
+  (`MVIE::DoTrans` -> `GPT::SetActiveColors`). Captures taken right after
+  a scene switch (export of every scene after the first, whole-movie
+  storyboards) used the previous set's colours and came out scrambled.
+  Captures now merge the scene's palette (`PglclrScene`) and make it the
+  active palette first (`UseScenePalette`), since SDL converts 8-bit blits
+  between surfaces through it; `RefreshViews` does the same so the screen
+  matches the scene left current. The end-to-end test compares an exported
+  frame of an undrawn set with a render made after the screen showed it.
+* `storyboard(all_scenes: true)` shares the cells out across scenes by
+  length (at least one each) and maps cells from sets with other palettes
+  onto the first cell's palette.
 * `review_movie` (reviewcmd.cpp; rules in review.cpp, unit tested) steps
   every frame of each scene without rendering to track movement, action
   changes, sound starts, cuts and text visibility, then renders every third

@@ -30,10 +30,17 @@ const uint32_t kdtsPlayTimeoutMax = 15 * 60 * kdtsSecond;
     offscreen port, exactly as they appear on screen. Works in release
     builds. Selection highlights are hidden while drawing.
 ***************************************************************************/
+static PBKGD _PbkgdCur(void)
+{
+    PMVIE pmvie = PmvieCur();
+    return pmvie != pvNil && pmvie->Pscen() != pvNil ? pmvie->Pscen()->Pbkgd() : pvNil;
+}
+
+// The palette for images of the current scene (or of pbkgdOverride's set)
 static std::vector<PngColor> _PaletteCur(PBKGD pbkgdOverride = pvNil)
 {
     std::vector<PngColor> palette;
-    PGL pglclr = GPT::PglclrGetPalette();
+    PGL pglclr = PglclrScene(pbkgdOverride != pvNil ? pbkgdOverride : _PbkgdCur());
     for (int32_t iclr = 0; pglclr != pvNil && iclr < pglclr->IvMac() && iclr < 256; iclr++)
     {
         CLR clr;
@@ -41,20 +48,6 @@ static std::vector<PngColor> _PaletteCur(PBKGD pbkgdOverride = pvNil)
         palette.push_back({clr.bRed, clr.bGreen, clr.bBlue});
     }
     ReleasePpo(&pglclr);
-
-    // Another background's pictures use that background's palette entries
-    PGL pglclrBkgd = pvNil;
-    int32_t iclrMin;
-    if (pbkgdOverride != pvNil && pbkgdOverride->FGetPalette(&pglclrBkgd, &iclrMin) && pglclrBkgd != pvNil)
-    {
-        for (int32_t iclr = 0; iclr < pglclrBkgd->IvMac() && iclrMin + iclr < (int32_t)palette.size(); iclr++)
-        {
-            CLR clr;
-            pglclrBkgd->Get(iclr, &clr);
-            palette[iclrMin + iclr] = {clr.bRed, clr.bGreen, clr.bBlue};
-        }
-    }
-    ReleasePpo(&pglclrBkgd);
     return palette;
 }
 
@@ -103,8 +96,9 @@ static bool _FCaptureView(Request &req, Image8 *pimg, bool fWorldOnly = fFalse)
     pmvie->Pbwld()->MarkDirty();
 
     bool fOk = fFalse;
+    UseScenePalette(pmvie);
     PGPT pgpt = GPT::PgptNewOffscreen(&rc, 8);
-    PGL pglclr = GPT::PglclrGetPalette();
+    PGL pglclr = PglclrScene(pscen != pvNil ? pscen->Pbkgd() : pvNil);
     if (pgpt != pvNil && pglclr != pvNil)
     {
         pgpt->SetOffscreenColors(pglclr);
@@ -410,77 +404,179 @@ static bool _FCmdPreviewCameras(Request &req)
 ***************************************************************************/
 const int32_t kcStoryboardMax = 24;
 
+struct StoryCell
+{
+    int32_t iscen;
+    int32_t nfrm;
+    double dSec; // into the scene, or into the movie for a whole-movie board
+};
+
+// Spreads ccell cells over every scene in proportion to its length (at
+// least one each), evenly within each scene
+static std::vector<StoryCell> _VecMovieCells(PMVIE pmvie, int32_t ccell)
+{
+    std::vector<int32_t> vecFirst, vecLen;
+    int32_t cfrmTotal = 0;
+    for (int32_t iscen = 0; iscen < pmvie->Cscen(); iscen++)
+    {
+        if (iscen != pmvie->Iscen() && !pmvie->FSwitchScen(iscen))
+            return {};
+        vecFirst.push_back(pmvie->Pscen()->NfrmFirst());
+        vecLen.push_back(pmvie->Pscen()->NfrmLast() - pmvie->Pscen()->NfrmFirst() + 1);
+        cfrmTotal += vecLen.back();
+    }
+    std::vector<StoryCell> vecCells;
+    int32_t cfrmBefore = 0;
+    for (int32_t iscen = 0; iscen < pmvie->Cscen(); iscen++)
+    {
+        int32_t ccellScen =
+            LwBound(static_cast<int32_t>(std::lround(ccell * static_cast<double>(vecLen[iscen]) / LwMax(1, cfrmTotal))),
+                    1, vecLen[iscen] + 1);
+        for (int32_t i = 0; i < ccellScen; i++)
+        {
+            // Centre the samples in equal slices so a scene's cells don't
+            // all land on its first and last frames
+            int32_t dnfrm = static_cast<int32_t>((i + 0.5) * vecLen[iscen] / ccellScen);
+            vecCells.push_back({iscen, vecFirst[iscen] + dnfrm, (cfrmBefore + dnfrm) / static_cast<double>(kfps)});
+        }
+        cfrmBefore += vecLen[iscen];
+    }
+    return vecCells;
+}
+
 static bool _FCmdStoryboard(Request &req)
 {
     PMVIE pmvie;
     PSCEN pscen;
     std::string strPath;
     int32_t cframe = 12;
+    bool fAllScenes = fFalse;
     static int32_t _cStoryboard = 0;
 
     if (!FRequireScene(req, &pmvie, &pscen) || !FRequireNotPlaying(req, pmvie))
         return fFalse;
-    if (!req.FArgInt("count", &cframe, fFalse) || !req.FArgString("path", &strPath, fFalse))
+    if (!req.FArgInt("count", &cframe, fFalse) || !req.FArgString("path", &strPath, fFalse) ||
+        !req.FArgBool("all_scenes", &fAllScenes, fFalse))
+    {
         return fFalse;
+    }
     cframe = LwBound(cframe, 2, kcStoryboardMax + 1);
 
     int32_t iscenRestore = pmvie->Iscen();
-    if (req.FHasArg("scene"))
-    {
-        int32_t iscen;
-        if (!req.FArgInt("scene", &iscen))
-            return fFalse;
-        if (iscen < 0 || iscen >= pmvie->Cscen())
-            return req.Fail(kszErrBadArgs, "scene " + std::to_string(iscen) + " does not exist");
-        if (iscen != pmvie->Iscen() && !pmvie->FSwitchScen(iscen))
-            return FFailEngine(req, "could not switch to scene " + std::to_string(iscen));
-        pscen = pmvie->Pscen();
-    }
     int32_t nfrmRestore = pscen->Nfrm();
-    int32_t nfrmFrom = pscen->NfrmFirst(), nfrmTo = pscen->NfrmLast();
-    if (!req.FArgInt("from", &nfrmFrom, fFalse) || !req.FArgInt("to", &nfrmTo, fFalse))
-        return fFalse;
-    nfrmFrom = LwMax(nfrmFrom, pscen->NfrmFirst());
-    nfrmTo = LwMin(nfrmTo, pscen->NfrmLast());
-    if (nfrmTo < nfrmFrom)
-        return req.Fail(kszErrBadArgs, "empty frame range");
-    cframe = LwMin(cframe, nfrmTo - nfrmFrom + 1);
+    std::vector<StoryCell> vecCells;
+    if (fAllScenes)
+    {
+        vecCells = _VecMovieCells(pmvie, cframe);
+        if (vecCells.empty())
+            return FFailEngine(req, "could not read the scenes");
+        if (static_cast<int32_t>(vecCells.size()) > kcStoryboardMax)
+            vecCells.resize(kcStoryboardMax); // more scenes than cells: the board shows the first ones
+    }
+    else
+    {
+        if (req.FHasArg("scene"))
+        {
+            int32_t iscen;
+            if (!req.FArgInt("scene", &iscen))
+                return fFalse;
+            if (iscen < 0 || iscen >= pmvie->Cscen())
+                return req.Fail(kszErrBadArgs, "scene " + std::to_string(iscen) + " does not exist");
+            if (iscen != pmvie->Iscen() && !pmvie->FSwitchScen(iscen))
+                return FFailEngine(req, "could not switch to scene " + std::to_string(iscen));
+            pscen = pmvie->Pscen();
+        }
+        int32_t nfrmFrom = pscen->NfrmFirst(), nfrmTo = pscen->NfrmLast();
+        if (!req.FArgInt("from", &nfrmFrom, fFalse) || !req.FArgInt("to", &nfrmTo, fFalse))
+            return fFalse;
+        nfrmFrom = LwMax(nfrmFrom, pscen->NfrmFirst());
+        nfrmTo = LwMin(nfrmTo, pscen->NfrmLast());
+        if (nfrmTo < nfrmFrom)
+            return req.Fail(kszErrBadArgs, "empty frame range");
+        cframe = LwMin(cframe, nfrmTo - nfrmFrom + 1);
+        for (int32_t i = 0; i < cframe; i++)
+        {
+            int32_t nfrm = cframe == 1 ? nfrmFrom : nfrmFrom + LwMulDiv(nfrmTo - nfrmFrom, i, cframe - 1);
+            vecCells.push_back({pmvie->Iscen(), nfrm, static_cast<double>(nfrm - pscen->NfrmFirst()) / kfps});
+        }
+    }
 
-    std::vector<PngColor> palette = _PaletteCur();
-    uint8_t bText = BNearestColor(palette, 255, 240, 0);
-    uint8_t bOutline = BNearestColor(palette, 0, 0, 0);
+    // The sheet uses the palette of the first cell's set; cells from sets
+    // with other palettes are mapped to the nearest colours
+    std::vector<PngColor> palette;
+    uint8_t bText = 0, bOutline = 0;
     Image8 imgSheet;
     Json jsonFrames = Json::MakeArray();
-    for (int32_t i = 0; i < cframe && !req.Failed(); i++)
+    int32_t ccell = static_cast<int32_t>(vecCells.size());
+    for (int32_t i = 0; i < ccell && !req.Failed(); i++)
     {
-        int32_t nfrm = cframe == 1 ? nfrmFrom : nfrmFrom + LwMulDiv(nfrmTo - nfrmFrom, i, cframe - 1);
-        Image8 img;
-        if (!pscen->FGotoFrm(nfrm))
+        const StoryCell &cell = vecCells[i];
+        if (cell.iscen != pmvie->Iscen() && !pmvie->FSwitchScen(cell.iscen))
         {
-            FFailEngine(req, "could not go to frame " + std::to_string(nfrm));
+            FFailEngine(req, "could not switch to scene " + std::to_string(cell.iscen));
+            break;
+        }
+        pscen = pmvie->Pscen();
+        Image8 img;
+        if (!pscen->FGotoFrm(cell.nfrm))
+        {
+            FFailEngine(req, "could not go to frame " + std::to_string(cell.nfrm));
             break;
         }
         if (!_FCaptureView(req, &img))
             break;
+        std::vector<PngColor> paletteCell = _PaletteCur();
+        if (palette.empty())
+        {
+            palette = paletteCell;
+            bText = BNearestColor(palette, 255, 240, 0);
+            bOutline = BNearestColor(palette, 0, 0, 0);
+        }
+        else if (!std::equal(palette.begin(), palette.end(), paletteCell.begin(), paletteCell.end(),
+                             [](const PngColor &a, const PngColor &b) {
+                                 return a.red == b.red && a.green == b.green && a.blue == b.blue;
+                             }))
+        {
+            uint8_t rgbMap[256] = {};
+            for (size_t iclr = 0; iclr < paletteCell.size() && iclr < 256; iclr++)
+                rgbMap[iclr] =
+                    BNearestColor(palette, paletteCell[iclr].red, paletteCell[iclr].green, paletteCell[iclr].blue);
+            for (uint8_t &b : img.pixels)
+                b = rgbMap[b];
+        }
         Image8 imgSmall = Downscale2x(img);
         if (imgSheet.width == 0)
         {
-            int32_t crow = (cframe + kcColumnsPreview - 1) / kcColumnsPreview;
-            int32_t ccol = LwMin(kcColumnsPreview, cframe);
+            int32_t crow = (ccell + kcColumnsPreview - 1) / kcColumnsPreview;
+            int32_t ccol = LwMin(kcColumnsPreview, ccell);
             imgSheet = Image8(ccol * imgSmall.width + (ccol - 1) * kdzpGapPreview,
                               crow * imgSmall.height + (crow - 1) * kdzpGapPreview, bOutline);
         }
         char rgch[40];
-        snprintf(rgch, sizeof(rgch), "F%d  %.1fS", nfrm, static_cast<double>(nfrm - pscen->NfrmFirst()) / kfps);
+        if (fAllScenes)
+            snprintf(rgch, sizeof(rgch), "S%d F%d  %.1fS", cell.iscen, cell.nfrm, cell.dSec);
+        else
+            snprintf(rgch, sizeof(rgch), "F%d  %.1fS", cell.nfrm, cell.dSec);
         DrawText(&imgSmall, 4, 4, rgch, bText, bOutline, 2);
         int32_t col = i % kcColumnsPreview, row = i / kcColumnsPreview;
         Blit(&imgSheet, imgSmall, col * (imgSmall.width + kdzpGapPreview), row * (imgSmall.height + kdzpGapPreview));
-        jsonFrames.Push(nfrm);
+        if (fAllScenes)
+        {
+            Json json = Json::MakeObject();
+            json.Set("scene", cell.iscen);
+            json.Set("frame", cell.nfrm);
+            json.Set("seconds", std::round(cell.dSec * 10) / 10);
+            jsonFrames.Push(json);
+        }
+        else
+        {
+            jsonFrames.Push(cell.nfrm);
+        }
     }
 
-    pscen->FGotoFrm(nfrmRestore);
     if (iscenRestore != pmvie->Iscen())
         pmvie->FSwitchScen(iscenRestore);
+    pmvie->Pscen()->FGotoFrm(nfrmRestore);
     RefreshViews(pmvie);
     if (req.Failed())
         return fFalse;
@@ -492,7 +588,8 @@ static bool _FCmdStoryboard(Request &req)
     req.result.Set("path", strPath);
     req.result.Set("frames", jsonFrames);
     req.result.Set("columns", kcColumnsPreview);
-    req.result.Set("note", "cells are labelled with the frame number and seconds into the scene");
+    req.result.Set("note", fAllScenes ? "cells are labelled S<scene> F<frame> and seconds into the movie"
+                                      : "cells are labelled with the frame number and seconds into the scene");
     return fTrue;
 }
 

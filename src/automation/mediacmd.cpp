@@ -72,7 +72,8 @@ static bool _FParseColor(Request &req, const Json &json, ACR *pacr)
         return req.Fail(kszErrBadArgs,
                         "colors must be \"#rrggbb\", a name (red, white, ...), [r,g,b] or \"transparent\"");
 
-    PGL pglclr = GPT::PglclrGetPalette();
+    PMVIE pmvie = PmvieCur();
+    PGL pglclr = PglclrScene(pmvie != pvNil && pmvie->Pscen() != pvNil ? pmvie->Pscen()->Pbkgd() : pvNil);
     if (pglclr == pvNil)
     {
         *pacr = ACR(static_cast<uint8_t>(r), static_cast<uint8_t>(g), static_cast<uint8_t>(b));

@@ -765,9 +765,12 @@ pub fn all_tools() -> Vec<ToolSpec> {
             "storyboard",
             Kind::BridgeImage("storyboard"),
             "See a whole scene at once: frames sampled evenly across it (default 12) on one image, each \
-             labelled with its frame number and time. The quickest way to review a scene you built.",
+             labelled with its frame number and time. The quickest way to review a scene you built. \
+             all_scenes: true samples the whole movie instead (cells shared out by scene length, labelled \
+             S<scene> F<frame>), the closest thing to watching it.",
             obj(
                 json!({
+                    "all_scenes": {"type": "boolean", "default": false, "description": "Sample the whole movie (ignores scene, from and to)."},
                     "scene": {"type": "integer", "minimum": 0, "description": "Default: the current scene."},
                     "count": {"type": "integer", "minimum": 2, "maximum": 24, "default": 12},
                     "from": {"type": "integer", "minimum": 1},
