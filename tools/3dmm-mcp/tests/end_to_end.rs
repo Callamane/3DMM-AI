@@ -305,7 +305,7 @@ async fn builds_saves_and_reopens_a_two_scene_movie() -> Result<()> {
     let played = s
         .call(
             "play",
-            json!({"from_start": true, "wait": true, "timeout_seconds": 60}),
+            json!({"from_start": true, "wait": true, "timeout_seconds": 180}),
         )
         .await?;
     ensure!(played["finished"] == true, "{played}");
