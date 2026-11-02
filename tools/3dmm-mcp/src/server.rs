@@ -19,6 +19,7 @@ use tokio::sync::Mutex;
 
 use crate::bridge::{BridgeClient, BridgeError};
 use crate::launcher;
+use crate::speech;
 use crate::tools::{all_tools, Kind, ToolSpec, WORKFLOW_GUIDE};
 
 const GUIDE_URI: &str = "3dmm://guide/workflow";
@@ -97,6 +98,56 @@ impl ThreeDmmServer {
         Ok(state)
     }
 
+    async fn speak_line(&self, args: Value, timeout: Duration) -> anyhow::Result<Vec<ContentBlock>> {
+        let text = args.get("text").and_then(Value::as_str).unwrap_or_default().to_string();
+        let voice = args.get("voice").and_then(Value::as_str);
+        let actor = args.get("actor").cloned().unwrap_or(Value::Null);
+        let action = args.get("action").cloned().unwrap_or_else(|| json!("Talk"));
+
+        let wav = speech::synthesize(&text, voice).await?;
+        let seconds = speech::wav_seconds(&wav)?;
+        let label: String = text.chars().take(40).collect();
+        let imported = self
+            .bridge_call("import_sound", json!({"path": wav, "type": "speech", "name": label}), timeout)
+            .await?;
+        let _ = std::fs::remove_file(&wav);
+        let sound_id = imported["sound_id"].clone();
+
+        let mut attach = json!({"sound": sound_id, "target": actor});
+        if let Some(frame) = args.get("frame") {
+            attach["frame"] = frame.clone();
+        }
+        let attached = self.bridge_call("attach_sound", attach, timeout).await?;
+        let start = attached["frame"].as_i64().unwrap_or(1);
+        // Round up so the actor keeps talking until the line is over
+        let frames = ((seconds * 6.0).ceil() as i64).max(1);
+
+        let mut result = json!({
+            "sound_id": sound_id,
+            "seconds": (seconds * 100.0).round() / 100.0,
+            "start_frame": start,
+            "frames": frames,
+            "end_frame": start + frames,
+        });
+        if action.as_str().map(str::to_lowercase).as_deref() != Some("none") {
+            let animated = self
+                .bridge_call(
+                    "animate",
+                    json!({"actor": actor, "action": action, "frames": frames, "frame": start}),
+                    timeout,
+                )
+                .await;
+            match animated {
+                Ok(animated) => result["action"] = animated["action"].clone(),
+                Err(err) => {
+                    // The line is in; say why the acting part didn't happen
+                    result["action_error"] = json!(format!("{err:#}"));
+                }
+            }
+        }
+        Ok(vec![ContentBlock::text(result.to_string())])
+    }
+
     async fn run_tool(&self, spec: &ToolSpec, args: Value) -> anyhow::Result<Vec<ContentBlock>> {
         let timeout = Duration::from_secs(spec.timeout_secs);
         match spec.kind {
@@ -108,6 +159,7 @@ impl ThreeDmmServer {
                 let result = self.bridge_call(cmd, args, timeout).await?;
                 Ok(vec![ContentBlock::text(result.to_string())])
             }
+            Kind::SpeakLine => self.speak_line(args, timeout).await,
             Kind::RenderImage => {
                 let result = self.bridge_call("render_frame", args, timeout).await?;
                 let path = result

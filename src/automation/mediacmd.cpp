@@ -102,6 +102,10 @@ static bool _FParseColor(Request &req, const Json &json, ACR *pacr)
 /***************************************************************************
     Text boxes
 ***************************************************************************/
+
+// Default caption size when the Studio's text settings were never used; the
+// engine default (14) is hard to read in a 544x306 frame
+const int32_t kdypCaptionDefault = 20;
 static std::string _StrFontNames(void)
 {
     std::string str;
@@ -209,7 +213,7 @@ static bool _FCmdAddText(Request &req)
         // The Studio's text settings are only initialized once its text
         // tools have been used; fall back to the engine's text box defaults
         chp.onn = vpappb->OnnDefVariable();
-        chp.dypFont = pmvie->Pmcc()->DypTboxDef();
+        chp.dypFont = LwMax(pmvie->Pmcc()->DypTboxDef(), kdypCaptionDefault);
         chp.grfont = fontNil;
         chp.acrFore = kacrBlack;
     }

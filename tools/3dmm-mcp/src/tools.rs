@@ -13,6 +13,8 @@ pub enum Kind {
     Launch,
     /// Render a frame and return it as an image.
     RenderImage,
+    /// Synthesize a spoken line, import it and (optionally) attach and act it.
+    SpeakLine,
 }
 
 pub struct ToolSpec {
@@ -522,6 +524,26 @@ pub fn all_tools() -> Vec<ToolSpec> {
                     "name": {"type": "string"}
                 }),
                 &["path", "type"],
+            ),
+        ),
+        spec(
+            "speak_line",
+            Kind::SpeakLine,
+            "Give an actor a line of dialogue: synthesizes the text as speech on this computer, imports it into \
+             the movie, plays it on the actor at the current frame (or 'frame') and, unless action is \"none\", \
+             makes the actor perform a talking action on the spot for exactly as long as the line lasts. Returns \
+             the line's length and end_frame so you can start the next line there. Give different characters \
+             different voices. There is no lip sync in 3D Movie Maker; the talking action stands in for it. \
+             Voices (macOS): e.g. Fred, Ralph, Albert, Daniel, Junior, Kathy, Samantha, Bad News, Whisper.",
+            obj(
+                json!({
+                    "actor": actor_ref("Who says it."),
+                    "text": {"type": "string", "description": "The line, as it should be spoken."},
+                    "voice": {"type": "string", "description": "Speech voice name (default: the system voice)."},
+                    "action": {"type": ["string", "integer"], "description": "Talking action, e.g. \"Talk\" or \"Yell\" (default \"Talk\"; \"none\" to leave the actor alone)."},
+                    "frame": frame_prop()
+                }),
+                &["actor", "text"],
             ),
         ),
         bridge(
