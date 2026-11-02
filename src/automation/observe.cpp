@@ -351,6 +351,7 @@ static bool _FCmdDescribeScene(Request &req)
     jsonCam.Set("world_matrix", jsonMat);
     req.result.Set("camera", jsonCam);
 
+    EnsureRendered(pmvie);
     Json jsonActors = Json::MakeArray();
     PGL pglpactr = pscen->PglRollCall();
     for (int32_t ipactr = 0; pglpactr != pvNil && ipactr < pglpactr->IvMac(); ipactr++)

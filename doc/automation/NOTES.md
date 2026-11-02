@@ -134,10 +134,20 @@ circle, …); fonts come from the `TFTH` catalog.
 
 Sound types (`sty` in `inc/msnd.h`): `stySfx`, `stySpeech`, `styMidi`.
 
-## 5. Coordinates, units, frames (read; units verified in §12)
+## 5. Coordinates, units, frames (verified)
 
+* **BRender is built fixed point here** (`BASED_FIXED=1` in the BRender
+  CMake): `BRS` is 16.16 fixed (`int32`), `BRA` is a 16-bit fraction of a
+  turn. Convert with `BrScalarToFloat` / `BrFloatToScalar` /
+  `BrAngleToDegree` / `BrDegreeToAngle` (the bridge wraps these as
+  `DFromBrs`, `BrsFromD`, `DegFromBra`, `BraFromDeg` in `bridge.h`).
 * BRender world space, right-handed, **Y up**, floor is **y = 0**.
-  `BR_SCALAR(10.0)` is commented as "1.0 meters" in `ACTR::_GetNewOrigin`.
+  `BR_SCALAR(10.0)` is commented as "1.0 meters" in `ACTR::_GetNewOrigin`;
+  consistent with actors measuring ~18–20 units tall.
+* **Engine bug:** `ACTR::GetXyzWorld` returns `xyz.dzr + _dxyzRte.dyr` for z
+  (should be `.dzr`). It is only used for mouse-drag scaling in `MVU`, so it
+  is left alone; the bridge reads `BODY::GetPosition` (the root model's
+  translation) instead.
 * The camera matrix (`BWLD::GetCamera(&bmat34, &hither, &yon, &fov)`) is
   camera→world; rows 0/1/2 are the camera X/Y/Z axes in world space, row 3 is
   the camera position. BRender cameras look down **−Z**.
@@ -207,7 +217,12 @@ kind of route the mouse produces, so playback in stock 3DMM is correct.
 `FMoveRoute` (used by the place tool) translates an existing subroute; the
 bridge uses it to position a newly added actor.
 
-## 7. Undo (read)
+## 7. Undo (read; verified)
+
+**3D Movie Maker keeps exactly one level of undo** (`MVIE` calls
+`SetCundbMax(1)`, and `TBOX` asserts it). `undo` therefore undoes the last
+bridge edit only. Saving clears it (stock behaviour).
+
 
 `DOCB` keeps a `GL<UNDB*>`; `MVIE::FAddUndo(pmunb)` stamps the scene index and
 frame, `DOCB::FUndo()/FRedo()` replay. Every non-`Core` engine edit creates its
@@ -237,7 +252,7 @@ The bridge exposes `undo`/`redo` and every bridge edit is undoable from the UI.
   (e.g. *talk*, *yell*) played while a speech sound plays. The bridge's
   `attach_sound` + `animate` (in-place action for N frames) is the equivalent.
 
-## 9. Capturing a composited frame without DEBUG (read; verified in §12)
+## 9. Capturing a composited frame without DEBUG (verified)
 
 `MVIE`'s DEBUG frame dump (`FWriteBmps`, `BWLD::FWriteBmp`) writes only the
 BRender working buffer, i.e. **no text boxes**. Text boxes are `TBXG` GOBs,
@@ -249,7 +264,7 @@ then draws every child text box on top. The pixels plus the current palette
 encoder (no new dependencies). Selection highlights are removed first
 (`SelectActr(nil)`, tbox deselect) and restored afterwards.
 
-## 10. Main-thread tick (read)
+## 10. Main-thread tick (verified)
 
 `APPB::_Loop`: dispatch queued commands; otherwise `SDL_WaitEventTimeout(1 ms)`;
 if nothing arrived, enqueue `cidIdle`. So `APP::FCmdIdle` runs roughly every
@@ -312,8 +327,72 @@ every command that takes content also accepts the display name
 
 ## 12. Verification log
 
-(filled in as things are proven by running code)
+* Stock build: `cmake --preset arm64-macos-debug` + `--target install`
+  builds unchanged on macOS (M-series, Apple clang 21); 19/19 tests pass.
+  Two environment issues, neither needing code changes: vcpkg's autotools
+  ports (gperf) fail when the checkout path contains a space, and
+  `brew install ninja autoconf autoconf-archive automake libtool` is needed.
+* `3D Movie Maker <file.3mm>` goes straight to the Studio (screenshot).
+* Bridge commands exercised from a client: catalog, scenes, actors, paths,
+  3D words, costumes, scale, rotation (facing left/right confirmed visually),
+  text boxes, imported WAV, built-in sounds, undo, save, reopen, play,
+  render, export.
+* Projection check: for an actor placed at stage (1, 1) the bridge's
+  computed screen point (309, 207) matches the engine's own render bounds
+  (x 275–355, bottom 216).
+* Frame capture includes text boxes (rendered caption visible in PNG).
+* `tools/3dmm-mcp/tests/end_to_end.rs` (two scenes: walk + caption + camera
+  cut; two actors with different actions, scene music, imported WAV on an
+  actor; save, reopen, play) passes against the debug build with asserts on.
+* The saved movie opens and plays in a **stock, unmodified** 3DMMEx built
+  from the base commit (`4c1fa94`), launched with its existing `-A`
+  (autoplay) switch: caption, walk, camera cut, dissolve and scene 2 all
+  play; the app exits normally at the end.
 
-## 13. Open questions / known limitations
+## 13. Decisions
 
-(see end of file; kept current)
+* **Polling, not threads.** Non-blocking sockets serviced from
+  `APP::FCmdIdle` (runs ~every ms, including during playback). Simplest
+  correct option; every engine call is naturally on the UI thread.
+* **Hand-rolled JSON and PNG** (`json.cpp`, `pngwrite.cpp`) to avoid adding
+  vcpkg dependencies to an upstream project. Both are unit tested.
+* **Paths use the mouse-recording API**, not hand-built route events, so the
+  `.3mm` contents are exactly what the Studio would produce.
+* **Automation starts in the Studio, windowed**, without touching the user's
+  saved fullscreen preference.
+* **`add_scene` keeps Studio semantics**: if the current scene is still empty
+  its background is replaced (the reply says so).
+* **Names are fuzzy, ids are exact.** Content and actors resolve by id, exact
+  name, unique prefix or unique substring; ambiguity is an error listing the
+  candidates.
+* **Errors are drained** from the engine's error stack after every command so
+  `DisplayErrors()` never pops a modal alert during automation.
+* **MCP tool table is declarative** (`tools.rs`) with hand-written JSON
+  schemas, so descriptions can be tuned for models without touching Rust
+  types. `speak_line` is MCP-side sugar over `import_sound`/`attach_sound`/
+  `animate` using the OS speech synthesizer.
+* **Build option is `3DMM_AUTOMATION`** (matching the project's `3DMM_*`
+  option names) rather than `THREEDMM_AUTOMATION`; the environment variable
+  that enables it at runtime is `THREEDMM_AUTOMATION` because shell variable
+  names can't start with a digit.
+
+## 14. Known limitations and open questions
+
+* One level of undo (engine limit).
+* Speed of a path is set by the action (and actor size); there is no
+  "arrive at frame N" option. `move_actor` reports the arrival frame.
+* No per-actor facing readout: `describe_scene` reports position, action and
+  screen bounds but not orientation (no public accessor).
+* No lip sync (engine has none); `speak_line` pairs speech with a talking
+  action.
+* Frame capture is 8-bit palettized (that's what 3DMM renders); half-res
+  "slow CPU" mode renders at the reduced size the engine uses.
+* Debug builds show assertion dialogs, which block the bridge until
+  dismissed; use the release preset for unattended runs.
+* `goto_studio` from the building runs the Util gob's "Load Studio" script;
+  it is only needed if someone navigates away, since automation sessions
+  start in the Studio.
+* Paths on Windows with non-ASCII characters may fail in `render_frame`
+  (`fopen` with narrow strings).
+* Only one 3DMMEx instance can run at a time (stock behaviour), so the MCP
+  server can't start a second copy if a non-automation copy is open.

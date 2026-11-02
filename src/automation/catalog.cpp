@@ -355,11 +355,40 @@ bool FResolveAction(Request &req, PTMPL ptmpl, const Json &jsonAction, int32_t *
 /***************************************************************************
     Commands
 ***************************************************************************/
+// The shipped backgrounds have terse internal names; describe what each set
+// actually shows (checked by rendering camera 0 of each).
+static const struct
+{
+    const char *pszName;
+    const char *pszDescription;
+} _rgbkgddesc[] = {
+    {"MY-Street Background", "city street with a stone archway, lamppost, bench and kiosk (outdoors, day)"},
+    {"MY-Mall Background", "shopping mall atrium with balconies, seen from above"},
+    {"MY-Rest Background", "diner/restaurant: cow-print booths, tables, a counter with stools"},
+    {"AD-Landscape Background", "tropical courtyard with an archway, palm trees and a domed building (outdoors, day)"},
+    {"AD-Hut Background", "rustic hut interior with a fountain and wooden chairs"},
+    {"AD-Cave Background", "dark cave with an opening to the outside"},
+    {"HH-Exterior Background", "haunted house exterior at night: rickety bridge, castle silhouette"},
+    {"HH-Interior Background", "dim haunted-house hallway"},
+    {"HH-Dining Background", "haunted-house dining hall with a long banquet table"},
+    {"HH-Lab Background", "mad scientist's laboratory"},
+    {"AD-Airplane Background", "airplane passenger cabin"},
+    {"GE-Black Background", "empty black stage (good for titles)"},
+};
+
 static Json _JsonEntry(const CatalogEntry &entry)
 {
     Json json = Json::MakeObject();
     json.Set("id", entry.id);
     json.Set("name", entry.name);
+    if (entry.kind == ContentKind::Background)
+    {
+        for (auto &desc : _rgbkgddesc)
+        {
+            if (entry.name == desc.pszName)
+                json.Set("description", desc.pszDescription);
+        }
+    }
     return json;
 }
 
@@ -378,9 +407,13 @@ static bool _FListKinds(Request &req, const std::vector<ContentKind> &kinds, con
             return FFailEngine(req, std::string("could not read the ") + PszKindName(kind) + " catalog");
         for (const CatalogEntry &entry : *pvec)
         {
-            if (!strFilter.empty() && StrLower(entry.name).find(strFilter) == std::string::npos)
-                continue;
             Json json = _JsonEntry(entry);
+            if (!strFilter.empty() && StrLower(entry.name).find(strFilter) == std::string::npos &&
+                StrLower(json.Get("description").IsString() ? json.Get("description").AsString() : "")
+                        .find(strFilter) == std::string::npos)
+            {
+                continue;
+            }
             if (pszType != nullptr)
                 json.Set("type", PszKindName(kind));
             jsonItems.Push(json);

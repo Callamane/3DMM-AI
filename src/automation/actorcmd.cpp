@@ -96,7 +96,8 @@ Json JsonActor(PMVIE pmvie, PACTR pactr, const StageFrame &stage, const CameraMo
         json.Set("lifetime", jsonLife);
     }
 
-    // Bounds from the last render (absent until the actor has been drawn)
+    // Screen bounds are a by-product of rendering; JsonActor callers render
+    // the world first (EnsureRendered) so these match the current frame
     if (pactr->FOnStage() && pactr->FIsInView())
     {
         RC rc;
@@ -115,6 +116,7 @@ static Json _JsonActorNow(PMVIE pmvie, PACTR pactr)
 {
     StageFrame stage;
     CameraModel camera;
+    EnsureRendered(pmvie);
     FGetStageFrame(pmvie, &stage, &camera);
     return JsonActor(pmvie, pactr, stage, camera);
 }
@@ -664,6 +666,7 @@ static bool _FCmdMoveActor(Request &req)
     req.result.Set("note", "the actor stops (freezes) at the end of the path; the scene's current frame is now the "
                            "last frame of the path. Speed is set by the action: use a faster action (e.g. run) to "
                            "cover ground quicker.");
+    EnsureRendered(pmvie);
     req.result.Set("actor", JsonActor(pmvie, pactr, stage, camera));
     return fTrue;
 }
@@ -777,6 +780,7 @@ static bool _FCmdPlaceActor(Request &req)
     bool fHeightGiven = req.args.Get("position").Has("y") || req.args.Get("position").Has("world");
     if (!_FEditActor(req, pactr, "move the actor", [&]() { return _FTeleport(pactr, target, !fHeightGiven); }))
         return fFalse;
+    EnsureRendered(pmvie);
     req.result.Set("actor", JsonActor(pmvie, pactr, stage, camera));
     return fTrue;
 }

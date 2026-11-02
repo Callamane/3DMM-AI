@@ -112,8 +112,9 @@ pub fn all_tools() -> Vec<ToolSpec> {
         bridge(
             "get_state",
             "Where things stand: which screen is showing, the open movie (title, file, unsaved changes, scene \
-             count), the current scene (frame, frame range, background, camera, selected actor).",
-            obj(json!({}), &[]),
+             count), the current scene (frame, frame range, background, camera, selected actor). all_scenes=true \
+             also lists every scene's length and the movie's total length in seconds.",
+            obj(json!({"all_scenes": {"type": "boolean", "default": false}}), &[]),
         ),
         bridge(
             "goto_studio",
@@ -161,7 +162,7 @@ pub fn all_tools() -> Vec<ToolSpec> {
         bridge(
             "list_backgrounds",
             "List the 3D sets (backgrounds) a scene can use, each with its camera angles. Names are terse \
-             (e.g. \"MY-Rest Background\" is a diner/restaurant); preview one with add_scene + render_frame. \
+             with a description of each set; filter matches names and descriptions (e.g. \"diner\"). \
              Pass ids or names to add_scene.",
             obj(
                 json!({
@@ -178,7 +179,8 @@ pub fn all_tools() -> Vec<ToolSpec> {
         ),
         bridge(
             "list_templates",
-            "List actors (people/creatures that walk and act) and props (objects). Use the id or name with \
+            "List actors (people/creatures that walk and act) and props (objects). Actors differ a lot in what they \
+             can do (some cannot talk or run), so check list_actions before casting. Use the id or name with \
              add_actor.",
             obj(
                 json!({
@@ -402,7 +404,8 @@ pub fn all_tools() -> Vec<ToolSpec> {
                 "Make an actor perform an action on the spot for a duration (talk, laugh, wave, dance...), \
                  starting at the current frame (or 'frame'). This also makes the scene last at least that long. \
                  Use it for dialogue: animate the speaker with a talking action while attaching a speech sound. \
-                 {FRAMES}"
+                 Like move_actor, this replaces whatever the actor was doing after the start frame, so build each \
+                 actor's performance in time order. {FRAMES}"
             ),
             obj(
                 json!({
@@ -533,7 +536,8 @@ pub fn all_tools() -> Vec<ToolSpec> {
              the movie, plays it on the actor at the current frame (or 'frame') and, unless action is \"none\", \
              makes the actor perform a talking action on the spot for exactly as long as the line lasts. Returns \
              the line's length and end_frame so you can start the next line there. Give different characters \
-             different voices. There is no lip sync in 3D Movie Maker; the talking action stands in for it. \
+             different voices. There is no lip sync in 3D Movie Maker; the talking action stands in for it. Like \
+             animate, it replaces what the actor did after the start frame, so script each actor in time order. \
              Voices (macOS): e.g. Fred, Ralph, Albert, Daniel, Junior, Kathy, Samantha, Bad News, Whisper.",
             obj(
                 json!({

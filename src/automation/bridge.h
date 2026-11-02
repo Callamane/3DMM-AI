@@ -148,6 +148,8 @@ std::string StrDrainEngineErrors(void);
 bool FFailEngine(Request &req, const std::string &strWhat);
 
 void RefreshViews(PMVIE pmvie);
+// Renders the 3D world for the current frame so actor screen bounds are current
+void EnsureRendered(PMVIE pmvie);
 
 /***************************************************************************
     Catalog helpers (catalog.cpp)

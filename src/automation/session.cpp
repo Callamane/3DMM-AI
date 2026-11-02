@@ -131,14 +131,60 @@ static bool _FCmdHello(Request &req)
     return fTrue;
 }
 
+// Frame range of every scene plus the movie's total length. Visits each
+// scene (only the current one is in memory), then returns to where it was.
+static bool _FAddSceneSummary(Request &req, PMVIE pmvie)
+{
+    int32_t iscenRestore = pmvie->Iscen();
+    int32_t nfrmRestore = pmvie->Pscen() != pvNil ? pmvie->Pscen()->Nfrm() : ivNil;
+    int32_t cfrmTotal = 0;
+    Json jsonScenes = Json::MakeArray();
+    STN stn;
+
+    if (pmvie->FPlaying())
+        return req.Fail(kszErrBadState, "the movie is playing; call stop first");
+    for (int32_t iscen = 0; iscen < pmvie->Cscen(); iscen++)
+    {
+        if (iscen != pmvie->Iscen() && !pmvie->FSwitchScen(iscen))
+            return FFailEngine(req, "could not read scene " + std::to_string(iscen));
+        PSCEN pscen = pmvie->Pscen();
+        int32_t cfrm = pscen->NfrmLast() - pscen->NfrmFirst() + 1;
+        Json json = Json::MakeObject();
+        json.Set("index", iscen);
+        pscen->Pbkgd()->GetName(&stn);
+        json.Set("background", StrFromStn(&stn));
+        json.Set("first_frame", pscen->NfrmFirst());
+        json.Set("last_frame", pscen->NfrmLast());
+        json.Set("seconds", static_cast<double>(cfrm) / kfps);
+        json.Set("actor_count", pscen->Cactr());
+        jsonScenes.Push(json);
+        cfrmTotal += cfrm;
+    }
+    if (iscenRestore != ivNil && iscenRestore != pmvie->Iscen())
+        pmvie->FSwitchScen(iscenRestore);
+    if (nfrmRestore != ivNil && pmvie->Pscen() != pvNil)
+        pmvie->Pscen()->FGotoFrm(nfrmRestore);
+    req.result.Set("scenes", jsonScenes);
+    req.result.Set("total_frames", cfrmTotal);
+    req.result.Set("total_seconds", static_cast<double>(cfrmTotal) / kfps);
+    return fTrue;
+}
+
 static bool _FCmdGetState(Request &req)
 {
     PMVIE pmvie = PmvieCur();
+    bool fAllScenes = fFalse;
 
+    if (!req.FArgBool("all_scenes", &fAllScenes, fFalse))
+        return fFalse;
     req.result.Set("screen", pmvie != pvNil ? "studio" : "building");
     req.result.Set("modal_dialog_open", vpappb->CactModal() > 0);
     if (pmvie != pvNil)
+    {
         req.result.Set("movie", JsonMovieState(pmvie));
+        if (fAllScenes && !_FAddSceneSummary(req, pmvie))
+            return fFalse;
+    }
     return fTrue;
 }
 
@@ -264,6 +310,9 @@ static bool _FCmdSaveMovie(Request &req)
 
     if (!pmvie->FSaveToFni(&fni, fTrue))
         return FFailEngine(req, "save failed");
+    // Push buffered writes to disk now, so the file is complete even if the
+    // app is killed before it next flushes (part of the header is buffered)
+    pmvie->Flush();
     pmvie->Pmcc()->UpdateTitle(pmvie->PstnTitle());
 
     fni.GetStnPath(&stn);

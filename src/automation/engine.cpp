@@ -397,6 +397,7 @@ static const ErcName _rgercname[] = {
     {ercFileGeneral, "file error"},
     {ercFileOpen, "cannot open file"},
     {ercFileCreate, "cannot create file"},
+    {ercCflOpen, "not a readable 3D Movie Maker file (or it was saved incompletely)"},
     {ercSocSaveFailure, "save failed"},
     {ercSocSceneSwitch, "could not switch scenes"},
     {ercSocBadFile, "not a valid movie file"},
@@ -453,6 +454,16 @@ bool FFailEngine(Request &req, const std::string &strWhat)
     if (strErrors.empty())
         return req.Fail(kszErrEngine, strWhat);
     return req.Fail(kszErrEngine, strWhat + ": " + strErrors);
+}
+
+void EnsureRendered(PMVIE pmvie)
+{
+    // Renders the BRender world for the current frame without drawing to
+    // the screen; updates each body's screen bounds
+    if (pmvie == pvNil || pmvie->Pscen() == pvNil)
+        return;
+    pmvie->Pbwld()->MarkDirty();
+    pmvie->Pbwld()->Render();
 }
 
 void RefreshViews(PMVIE pmvie)
