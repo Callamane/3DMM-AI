@@ -146,3 +146,23 @@ fn wrong_types_are_rejected() {
         "{err}"
     );
 }
+
+#[test]
+fn every_tool_is_documented_in_the_readme() {
+    let readme = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../README.md"))
+        .expect("README.md at the repository root");
+    let start = readme.find("### Tools").expect("a Tools section");
+    let end = readme[start..]
+        .find("### Coordinates")
+        .map_or(readme.len(), |i| start + i);
+    let table = &readme[start..end];
+    let missing: Vec<&str> = all_tools()
+        .iter()
+        .map(|t| t.name)
+        .filter(|name| !table.contains(&format!("`{name}`")))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "add these to the README's Tools table: {missing:?}"
+    );
+}
