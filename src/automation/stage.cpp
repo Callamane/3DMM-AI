@@ -107,6 +107,56 @@ Vec3 StageFrame::FromWorld(const Vec3 &world) const
     return Vec3(d.Dot(_right) / kdwrPerMetre, world.y / kdwrPerMetre, d.Dot(_forward) / kdwrPerMetre);
 }
 
+double DegYaw(const Vec3 &dir)
+{
+    // Rotating (0,0,1) by angle a about y gives (sin a, 0, cos a)
+    return std::atan2(dir.x, dir.z) * 180.0 / kPi;
+}
+
+double DegWrap(double deg)
+{
+    deg = std::fmod(deg, 360.0);
+    if (deg <= -180)
+        deg += 360;
+    else if (deg > 180)
+        deg -= 360;
+    return deg;
+}
+
+const char *PszFacing(double deg)
+{
+    static const char *const rgpsz[] = {"camera", "front-right", "right", "back-right",
+                                        "away",   "back-left",   "left",  "front-left"};
+    double degPos = DegWrap(deg);
+    if (degPos < 0)
+        degPos += 360;
+    return rgpsz[static_cast<int>(std::floor(degPos / 45.0 + 0.5)) % 8];
+}
+
+std::vector<GroupSpot> VecGroupSpots(int32_t cactor, double dSpacing, bool fArc)
+{
+    std::vector<GroupSpot> vecSpots;
+    double dxHalf = (cactor - 1) * dSpacing / 2;
+    for (int32_t i = 0; i < cactor; i++)
+    {
+        double x = i * dSpacing - dxHalf;
+        double z = 0;
+        if (fArc && cactor > 2)
+        {
+            double t = x / dxHalf;
+            z = 0.4 * dSpacing * (1 - t * t);
+        }
+        vecSpots.push_back({x, z});
+    }
+    return vecSpots;
+}
+
+GroupSpot SpotGroupFocus(double dSpacing)
+{
+    // Two actors dSpacing apart then turn about 30 degrees toward the camera
+    return {0, -0.3 * dSpacing};
+}
+
 double StageFrame::YawOfStageForwardDegrees() const
 {
     // Rotation about +y that takes world +z (0,0,1) to _forward.

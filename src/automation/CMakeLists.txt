@@ -20,6 +20,7 @@ endif()
 target_sources(studio
     PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/actorcmd.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/blockcmd.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/bridge.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/catalog.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/engine.cpp"

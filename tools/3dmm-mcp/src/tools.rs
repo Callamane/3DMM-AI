@@ -548,16 +548,38 @@ pub fn all_tools() -> Vec<ToolSpec> {
             ),
         ),
         bridge(
+            "arrange_actors",
+            "Block a group of actors in one call, at the current frame. layout conversation (default) stands them \
+             on a shallow arc, partners turned toward each other but open to the camera; line stands them in a \
+             row facing the camera. Starts close to the camera and moves the group back or sideways until \
+             everyone is fully in shot and at least 80% visible (not hidden by furniture or each other); \
+             reports the spot used and a framing note if nothing worked. Do it before animating: it moves each \
+             actor's whole current path segment.",
+            obj(
+                json!({
+                    "actors": {"type": "array", "items": {"type": ["integer", "string"]}, "description": "Actor ids or names. Default: everyone on stage."},
+                    "layout": {"type": "string", "enum": ["conversation", "line"], "default": "conversation"},
+                    "spacing": {"type": "number", "minimum": 0.3, "maximum": 5, "default": 1, "description": "Metres between neighbours."},
+                    "x": {"type": "number", "description": "Fix the group's centre (stage metres); default lets it slide to avoid furniture."},
+                    "z": {"type": "number", "description": "Fix the group's depth (stage metres); default finds the closest that fits."},
+                    "frame": frame_prop()
+                }),
+                &[],
+            ),
+        ),
+        bridge(
             "rotate_actor",
-            "Turn an actor from the current frame on. turn = degrees counter-clockwise seen from above \
-             (positive turns the actor to its own left). facing is a shortcut that assumes the actor currently \
-             faces the camera: \"left\"/\"right\"/\"away\". tilt/roll rotate about the other axes. \
-             this_frame_only applies the rotation to just this frame.",
+            "Turn an actor from the current frame on. face turns it to look somewhere, whatever way it faces \
+             now: \"camera\", \"away\", \"left\"/\"right\" (screen directions), another actor (so two \
+             characters look at each other), or a stage point {x, z}. turn = extra degrees counter-clockwise \
+             seen from above. tilt/roll rotate about the other axes. this_frame_only applies the rotation to \
+             just this frame. describe_scene reports each actor's facing.",
             obj(
                 json!({
                     "actor": actor_ref(""),
+                    "face": {"description": "\"camera\", \"away\", \"left\", \"right\", degrees from facing the camera (+90 = screen right), an actor id/name, or {x, z}."},
                     "turn": {"type": "number"},
-                    "facing": {"type": ["string", "number"]},
+                    "facing": {"type": ["string", "number"], "description": "Older name for face."},
                     "tilt": {"type": "number"},
                     "roll": {"type": "number"},
                     "this_frame_only": {"type": "boolean", "default": false},
@@ -905,7 +927,7 @@ pub const WORKFLOW_GUIDE: &str = r#"# Making a movie with 3D Movie Maker
 2. **Pick a set** — `list_backgrounds` (each has a description; `filter: "diner"` works). `preview_cameras(background)` shows every camera angle on one image without changing the movie.
 3. **Scene** — `add_scene(background, camera)`. A new movie has no scenes; add one before anything else.
 4. **Cast** — `list_templates(type: "actor")` lists actors with a description of how they look; check `list_actions(template)` before casting (some can't talk or run; names vary, e.g. "Walk Fast *").
-5. **Block** — `add_actor(template, position, facing, name)`. Positions are stage metres relative to the camera: x right/left, z away/toward, origin = the set's default spot. `render_frame(overlay: true)` draws the floor grid (X=/Z= lines every metre) and labels actors, so you can see exactly where positions land and whether furniture hides someone.
+5. **Block** — `add_actor(template, position, facing, name)`, then `arrange_actors` to stand a group so everyone faces each other, fits the shot and isn't hidden by furniture (it slides the group as needed). `rotate_actor(face: "Greg")` turns one actor toward another, the camera or a point; `describe_scene` reports each actor's `facing` and `visible_fraction`. Positions are stage metres relative to the camera: x right/left, z away/toward, origin = the set's default spot. `render_frame(overlay: true)` draws the floor grid (X=/Z= lines every metre) and labels actors, so you can see exactly where positions land and whether furniture hides someone.
 6. **Act** — work through each actor in time order (recording at a frame replaces what that actor did afterwards):
    - `move_actor(actor, path: [{x,z},...], action: "Walk Fast")` walks from the current frame and reports the arrival frame.
    - `speak_line(actor, text, voice, action: "Talk")` synthesizes the line, attaches it, and acts it for exactly its length; chain lines using the returned `end_frame`. Give each character its own voice.

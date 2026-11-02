@@ -36,7 +36,7 @@ static bool _fInPoll = false;
 
 static const CommandInfo *const _rgpcmdTables[] = {krgcmdSession, krgcmdCatalog, krgcmdScene, krgcmdActor,
                                                    krgcmdMedia,   krgcmdObserve, krgcmdExport,
-                                                   krgcmdReview};
+                                                   krgcmdReview,  krgcmdBlock};
 
 static const CommandInfo *_PcmdFind(const std::string &strCmd)
 {

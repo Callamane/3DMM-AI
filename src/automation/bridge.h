@@ -93,6 +93,7 @@ extern const CommandInfo krgcmdMedia[];
 extern const CommandInfo krgcmdObserve[];
 extern const CommandInfo krgcmdExport[];
 extern const CommandInfo krgcmdReview[];
+extern const CommandInfo krgcmdBlock[];
 
 /***************************************************************************
     BRender number conversions. This build of BRender is fixed point
@@ -140,6 +141,20 @@ bool FResolveActor(Request &req, const char *pszName, PACTR *ppactr);
 // Builds the camera model and stage frame for the current scene/camera.
 bool FGetCamera(PMVIE pmvie, CameraModel *pcamera);
 bool FGetStageFrame(PMVIE pmvie, StageFrame *pstage, CameraModel *pcamera = pvNil);
+// Degrees an actor is turned from facing the camera, as in 'facing':
+// 0 = toward the camera, +90 = toward screen right, 180 = away (actorcmd.cpp)
+double DegFacingFromCamera(PACTR pactr, const CameraModel &camera);
+// Moves an actor's current path segment so it stands at target (world)
+bool FTeleportActor(PACTR pactr, const Vec3 &target, bool fKeepHeight);
+// The turn (degrees about +y) that makes an actor face jsonFace: "camera",
+// "away", "left", "right", degrees from facing the camera, an actor or {x, z}
+bool FTurnToFace(Request &req, PMVIE pmvie, PACTR pactr, const Json &jsonFace, double *pdegTurn);
+// Share (0..1) of an actor's silhouette that shows: its pixels in the
+// render against its pixels with nothing in front of it (observe.cpp). Low
+// values mean scenery or other actors hide it.
+bool FVisibleFraction(PMVIE pmvie, PACTR pactr, double *pdFraction);
+// JSON description of an actor (actorcmd.cpp)
+Json JsonActor(PMVIE pmvie, PACTR pactr, const StageFrame &stage, const CameraModel &camera);
 
 // Parses a position argument: {"x","z"[,"y"]} in stage metres or
 // {"world":[x,y,z]}. Returns world coordinates.

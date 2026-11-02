@@ -297,3 +297,43 @@ TEST(AutomationReview, GroupsFramesIntoRanges)
     EXPECT_EQ(vec[2].to, 40);
     EXPECT_TRUE(VecRanges({}, 3).empty());
 }
+
+TEST(AutomationStage, YawAndFacingNames)
+{
+    EXPECT_NEAR(DegYaw(Vec3(0, 0, 1)), 0, 1e-9);
+    EXPECT_NEAR(DegYaw(Vec3(1, 5, 0)), 90, 1e-9); // y ignored
+    EXPECT_NEAR(DegWrap(270), -90, 1e-9);
+    EXPECT_NEAR(DegWrap(-180), 180, 1e-9);
+    EXPECT_NEAR(DegWrap(540), 180, 1e-9);
+    EXPECT_STREQ(PszFacing(0), "camera");
+    EXPECT_STREQ(PszFacing(20), "camera");
+    EXPECT_STREQ(PszFacing(40), "front-right");
+    EXPECT_STREQ(PszFacing(90), "right");
+    EXPECT_STREQ(PszFacing(-90), "left");
+    EXPECT_STREQ(PszFacing(179), "away");
+    EXPECT_STREQ(PszFacing(-170), "away");
+    EXPECT_STREQ(PszFacing(-45), "front-left");
+}
+
+TEST(AutomationStage, GroupSpots)
+{
+    auto two = VecGroupSpots(2, 1.0, true);
+    ASSERT_EQ(two.size(), 2u);
+    EXPECT_NEAR(two[0].x, -0.5, 1e-9);
+    EXPECT_NEAR(two[1].x, 0.5, 1e-9);
+    EXPECT_NEAR(two[0].z, 0, 1e-9);
+
+    auto three = VecGroupSpots(3, 1.0, true);
+    EXPECT_NEAR(three[1].x, 0, 1e-9);
+    EXPECT_GT(three[1].z, three[0].z); // the middle stands further back
+    EXPECT_NEAR(three[0].z, three[2].z, 1e-9);
+
+    auto line = VecGroupSpots(4, 0.8, false);
+    EXPECT_NEAR(line[3].x - line[0].x, 2.4, 1e-9);
+    for (const GroupSpot &spot : line)
+        EXPECT_NEAR(spot.z, 0, 1e-9);
+
+    EXPECT_EQ(VecGroupSpots(1, 1.0, true).size(), 1u);
+    EXPECT_NEAR(VecGroupSpots(1, 1.0, true)[0].x, 0, 1e-9);
+    EXPECT_LT(SpotGroupFocus(1.0).z, 0); // toward the camera
+}

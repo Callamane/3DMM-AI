@@ -41,6 +41,7 @@ const BRIDGE_COMMANDS: &[&str] = &[
     "move_actor",
     "animate",
     "place_actor",
+    "arrange_actors",
     "rotate_actor",
     "scale_actor",
     "set_costume",

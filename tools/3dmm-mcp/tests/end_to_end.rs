@@ -348,6 +348,41 @@ async fn builds_saves_and_reopens_a_two_scene_movie() -> Result<()> {
         direct_png.display()
     );
 
+    // ---- Blocking: actors turn to face each other and a group is arranged
+    // so everyone is in shot and visible
+    s.call(
+        "add_actor",
+        json!({"template": "Bella", "name": "Ann", "position": {"x": -1.0, "z": 1.5}}),
+    )
+    .await?;
+    s.call(
+        "add_actor",
+        json!({"template": "Gregory", "name": "Bob", "position": {"x": 1.0, "z": 1.5}}),
+    )
+    .await?;
+    let turned = s
+        .call("rotate_actor", json!({"actor": "Ann", "face": "Bob"}))
+        .await?;
+    ensure!(turned["actor"]["facing"] == "right", "{turned}");
+    let arranged = s.call("arrange_actors", json!({})).await?;
+    ensure!(
+        arranged["actors"].as_array().map(Vec::len) == Some(2),
+        "{arranged}"
+    );
+    let described = s.call("describe_scene", json!({})).await?;
+    for actor in described["actors"].as_array().context("actors")? {
+        let visible = actor["visible_fraction"].as_f64().unwrap_or(0.0);
+        ensure!(
+            visible >= 0.8 || arranged["framing"].is_string(),
+            "arranged actor hidden: {actor}"
+        );
+    }
+    let ann = &arranged["actors"][0];
+    ensure!(
+        ann["facing_degrees"].as_f64().unwrap_or(0.0) > 20.0,
+        "the left partner turns toward the right one: {ann}"
+    );
+
     println!("movie: {}", movie.display());
     s.call("quit", json!({"discard_changes": true})).await?;
     Ok(())

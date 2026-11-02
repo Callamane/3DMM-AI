@@ -486,6 +486,27 @@ on the way:
 * Text alignment uses `TXRD::FApplyPap` (paragraph `jc`), part of the
   stock rich-text format: the stock build shows aligned text the same way.
   Captions placed with the top/bottom/center presets default to centred.
+* Facing: actors face along their model -x axis (found by adding actors
+  with known facings and checking renders). `BODY::GetMatrix` (new, one
+  accessor) exposes the root transform; `DegFacingFromCamera` compares it
+  with the camera's +z axis, so 0 = toward the camera and +90 = screen
+  right, the same convention as `facing` on add_actor. `rotate_actor(face)`
+  turns by the difference to an absolute target (direction, actor, point).
+* Visibility: `FVisibleFraction` counts an actor's pixels (render with and
+  without it) and divides by the same count with nothing in front of it:
+  other actors hidden and `BWLD::SetIgnoreBackgroundDepth` (new, off by
+  default) filling the working Z buffer with the farthest depth instead of
+  the set's depth image. Unobstructed actors read 0.99-1.0 in any pose; one
+  behind the diner booth 0.26. Bounding boxes alone misjudge this (a
+  half-covered actor with a clear face has a 69% box overlap). review_movie
+  flags below 0.4; arrange_actors wants 0.8 for everyone. About 5 ms per
+  actor.
+* `arrange_actors` (blockcmd.cpp; layout maths in stage.cpp, unit tested)
+  tries depths from 1 m back, and at each depth slides the group 0, +-0.6,
+  +-1.2 m sideways, keeping the first spot where everyone is in shot, not
+  cut off at the sides, not box-covered by a nearer actor by more than
+  35%, and at least 80% visible. Movies it arranges play the same in the
+  stock build.
 * `review_movie` (reviewcmd.cpp; rules in review.cpp, unit tested) steps
   every frame of each scene without rendering to track movement, action
   changes, sound starts, cuts and text visibility, then renders every third

@@ -62,6 +62,17 @@ static std::string _StrTemplateId(PACTR pactr, std::string *pstrType)
     return "tmpl:" + std::to_string(tag.sid) + ":" + std::to_string(static_cast<uint32_t>(tag.cno));
 }
 
+double DegFacingFromCamera(PACTR pactr, const CameraModel &camera)
+{
+    // Actors face along their model -x axis (found by turning actors to
+    // known facings); the camera looks down its -z axis, so facing the
+    // camera means facing along its +z
+    BMAT34 bmat34;
+    pactr->Pbody()->GetMatrix(&bmat34);
+    Vec3 dirFacing(-DFromBrs(bmat34.m[0][0]), 0, -DFromBrs(bmat34.m[0][2]));
+    return DegWrap(DegYaw(dirFacing) - DegYaw(camera.axisZ));
+}
+
 Json JsonActor(PMVIE pmvie, PACTR pactr, const StageFrame &stage, const CameraModel &camera)
 {
     Json json = Json::MakeObject();
@@ -79,6 +90,9 @@ Json JsonActor(PMVIE pmvie, PACTR pactr, const StageFrame &stage, const CameraMo
     json.Set("selected", pmvie->Pscen()->PactrSelected() == pactr);
 
     json.Set("position", JsonFromPoint(_XyzWorld(pactr), stage, camera));
+    double degFacing = DegFacingFromCamera(pactr, camera);
+    json.Set("facing", PszFacing(degFacing));
+    json.Set("facing_degrees", static_cast<int>(std::lround(degFacing)));
 
     Json jsonAction = Json::MakeObject();
     jsonAction.Set("index", pactr->AnidCur());
@@ -181,7 +195,7 @@ static void _AddActorUndo(Request &req, PMVIE pmvie, PACTR pactr)
 
 // Translates the actor's whole current subroute so it stands at target.
 // fKeepHeight: only move in x/z (3D words float above the floor).
-static bool _FTeleport(PACTR pactr, const Vec3 &target, bool fKeepHeight)
+bool FTeleportActor(PACTR pactr, const Vec3 &target, bool fKeepHeight)
 {
     Vec3 cur = _XyzWorld(pactr);
     Vec3 d = target - cur;
@@ -234,7 +248,7 @@ static bool _FFinishAdd(Request &req, PMVIE pmvie, PACTR pactr, bool fKeepHeight
         if (!FParsePosition(req, req.args.Get("position"), stage, &target))
             return fFalse;
         bool fHeightGiven = req.args.Get("position").Has("y") || req.args.Get("position").Has("world");
-        if (!_FTeleport(pactr, target, fKeepHeight && !fHeightGiven))
+        if (!FTeleportActor(pactr, target, fKeepHeight && !fHeightGiven))
             return FFailEngine(req, "could not position the actor");
     }
 
@@ -819,10 +833,65 @@ static bool _FCmdPlaceActor(Request &req)
         return req.Failed() ? fFalse : FFailEngine(req, "no camera");
 
     bool fHeightGiven = req.args.Get("position").Has("y") || req.args.Get("position").Has("world");
-    if (!_FEditActor(req, pactr, "move the actor", [&]() { return _FTeleport(pactr, target, !fHeightGiven); }))
+    if (!_FEditActor(req, pactr, "move the actor", [&]() { return FTeleportActor(pactr, target, !fHeightGiven); }))
         return fFalse;
     EnsureRendered(pmvie);
     req.result.Set("actor", JsonActor(pmvie, pactr, stage, camera));
+    return fTrue;
+}
+
+// Turn (degrees about +y) that makes pactr face jsonFace: "camera", "away",
+// "left"/"right" (screen directions), a number of degrees from facing the
+// camera, another actor (id or name) or a stage point {x, z}
+bool FTurnToFace(Request &req, PMVIE pmvie, PACTR pactr, const Json &jsonFace, double *pdegTurn)
+{
+    StageFrame stage;
+    CameraModel camera;
+    if (!FGetStageFrame(pmvie, &stage, &camera))
+        return FFailEngine(req, "no camera");
+    EnsureRendered(pmvie);
+    double degTarget;
+    bool fDirection = jsonFace.IsNumber();
+    if (jsonFace.IsString())
+    {
+        std::string str = StrLower(jsonFace.AsString());
+        fDirection = str == "camera" || str == "front" || str == "toward_camera" || str == "away" || str == "back" ||
+                     str == "left" || str == "screen_left" || str == "right" || str == "screen_right";
+    }
+    if (fDirection)
+    {
+        if (!_FFacingDegrees(req, jsonFace, &degTarget))
+            return fFalse;
+    }
+    else
+    {
+        Vec3 target;
+        if (jsonFace.IsObject())
+        {
+            if (!FParsePosition(req, jsonFace, stage, &target))
+                return fFalse;
+        }
+        else
+        {
+            Request reqT;
+            reqT.args.Set("actor", jsonFace);
+            PACTR pactrTarget;
+            if (!FResolveActor(reqT, "actor", &pactrTarget))
+            {
+                return req.Fail(kszErrBadArgs, "'face' must be \"camera\", \"away\", \"left\", \"right\", degrees, "
+                                               "an actor or a point {x, z}: " +
+                                                   reqT.errMessage);
+            }
+            if (pactrTarget == pactr)
+                return req.Fail(kszErrBadArgs, "an actor can't face itself");
+            target = _XyzWorld(pactrTarget);
+        }
+        Vec3 dir = target - _XyzWorld(pactr);
+        if (std::fabs(dir.x) + std::fabs(dir.z) < 1e-6)
+            return req.Fail(kszErrBadArgs, "the actor is standing on that spot");
+        degTarget = DegYaw(dir) - DegYaw(camera.axisZ);
+    }
+    *pdegTurn = DegWrap(degTarget - DegFacingFromCamera(pactr, camera));
     return fTrue;
 }
 
@@ -842,13 +911,28 @@ static bool _FCmdRotateActor(Request &req)
     {
         return fFalse;
     }
-    if (req.FHasArg("facing") && !_FFacingDegrees(req, req.args.Get("facing"), &degY))
-        return fFalse;
-    if (degX == 0 && degY == 0 && degZ == 0)
-        return req.Fail(kszErrBadArgs,
-                        "pass 'turn' (degrees, positive = counter-clockwise seen from above), 'tilt' or 'roll'");
     if (!pactr->FOnStage())
         return req.Fail(kszErrBadState, "the actor is not on stage at frame " + std::to_string(pscen->Nfrm()));
+    // face (or its older name facing) turns to an absolute direction
+    const char *pszFace = req.FHasArg("face") ? "face" : (req.FHasArg("facing") ? "facing" : nullptr);
+    if (pszFace != nullptr)
+    {
+        double degTurn;
+        if (!FTurnToFace(req, pscen->Pmvie(), pactr, req.args.Get(pszFace), &degTurn))
+            return fFalse;
+        degY += degTurn;
+        if (std::fabs(degY) < 0.5 && degX == 0 && degZ == 0)
+        {
+            req.result.Set("note", "already facing that way");
+            req.result.Set("actor", _JsonActorNow(pscen->Pmvie(), pactr));
+            return fTrue;
+        }
+    }
+    if (degX == 0 && degY == 0 && degZ == 0)
+    {
+        return req.Fail(kszErrBadArgs, "pass 'face' (camera, left, right, away, an actor or a point), 'turn' "
+                                       "(degrees, positive = counter-clockwise seen from above), 'tilt' or 'roll'");
+    }
 
     if (!_FEditActor(req, pactr, "rotate the actor", [&]() {
             return pactr->FRotate(BraFromDeg(degX), BraFromDeg(degY), BraFromDeg(degZ), !fThisFrameOnly);

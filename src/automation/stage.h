@@ -11,6 +11,9 @@
 #ifndef AUTOMATION_STAGE_H
 #define AUTOMATION_STAGE_H
 
+#include <cstdint>
+#include <vector>
+
 namespace automation
 {
 
@@ -45,6 +48,28 @@ struct Vec3
     double Length() const;
     Vec3 Normalized() const;
 };
+
+// Yaw of a direction on the floor: degrees about +y (counter-clockwise seen
+// from above) that turn world +z to it. y is ignored.
+double DegYaw(const Vec3 &dir);
+// Wraps an angle to (-180, 180]
+double DegWrap(double deg);
+// Names an actor's facing, given degrees turned from facing the camera
+// (+90 = facing screen right): "camera", "front-right", "right",
+// "back-right", "away", "back-left", "left" or "front-left"
+const char *PszFacing(double deg);
+
+// Where actors in a group stand, in metres relative to the group's front
+// centre (x right, z away). A conversation is a shallow arc bowed away from
+// the camera so everyone stays visible; a line is straight.
+struct GroupSpot
+{
+    double x, z;
+};
+std::vector<GroupSpot> VecGroupSpots(int32_t cactor, double dSpacing, bool fArc);
+// The point a conversation group looks at: just in front of its centre,
+// so partners face each other while turned a little toward the camera
+GroupSpot SpotGroupFocus(double dSpacing);
 
 // A camera as BRender describes it: camera-to-world matrix rows (X axis,
 // Y axis, Z axis, position), vertical field of view, and viewport size.

@@ -197,6 +197,95 @@ bool FRenderToPng(Request &req, const std::string &strPath, int32_t *pdxp, int32
     return _FWriteImage(req, strPath, img, palette);
 }
 
+// Renders just the 3D world (no text boxes) for the view rect
+static bool _FRenderWorld(PMVIE pmvie, RC *prcView, Image8 *pimg)
+{
+    PGPT pgpt = GPT::PgptNewOffscreen(prcView, 8);
+    PGL pglclr = PglclrScene(pmvie->Pscen()->Pbkgd());
+    bool fOk = pgpt != pvNil && pglclr != pvNil;
+    if (fOk)
+    {
+        pgpt->SetOffscreenColors(pglclr);
+        GNV gnv(pgpt);
+        pmvie->Pbwld()->MarkDirty();
+        pmvie->Pbwld()->Render();
+        pmvie->Pbwld()->Draw(&gnv, prcView, 0, 0);
+        _CopyPixels(pgpt, prcView, pimg);
+    }
+    ReleasePpo(&pgpt);
+    ReleasePpo(&pglclr);
+    return fOk;
+}
+
+// Counts the pixels in rc that change when pactr is hidden: its pixels
+// that show in the current render
+static bool _FCountActorPixels(PMVIE pmvie, PACTR pactr, RC *prcView, const RC &rc, int32_t *pcpix)
+{
+    Image8 imgWith, imgWithout;
+    if (!_FRenderWorld(pmvie, prcView, &imgWith))
+        return fFalse;
+    pactr->Pbody()->Hide();
+    bool fOk = _FRenderWorld(pmvie, prcView, &imgWithout);
+    pactr->Pbody()->Show();
+    if (!fOk)
+        return fFalse;
+    *pcpix = 0;
+    for (int32_t y = rc.ypTop; y < rc.ypBottom; y++)
+    {
+        for (int32_t x = rc.xpLeft; x < rc.xpRight; x++)
+            *pcpix += imgWith.Get(x, y) != imgWithout.Get(x, y);
+    }
+    return fTrue;
+}
+
+bool FVisibleFraction(PMVIE pmvie, PACTR pactr, double *pdFraction)
+{
+    PMVU pmvu = PmvuCur();
+    PSCEN pscen = pmvie->Pscen();
+    if (pmvu == pvNil || pscen == pvNil || !pactr->FOnStage())
+        return fFalse;
+    RC rcView, rcActr, rcBox;
+    pmvu->GetRc(&rcView, cooLocal);
+    UseScenePalette(pmvie);
+    EnsureRendered(pmvie);
+    pactr->GetRcBounds(&rcActr);
+    if (!rcBox.FIntersect(&rcActr, &rcView))
+    {
+        *pdFraction = 0;
+        return fTrue;
+    }
+
+    // What shows now, against its whole silhouette: the same with nothing
+    // in front of it (no background depth, other actors hidden)
+    int32_t cpixVisible, cpixWhole = 0;
+    bool fOk = _FCountActorPixels(pmvie, pactr, &rcView, rcBox, &cpixVisible);
+    if (fOk)
+    {
+        std::vector<PACTR> vecHidden;
+        PGL pglpactr = pscen->PglRollCall();
+        for (int32_t ipactr = 0; pglpactr != pvNil && ipactr < pglpactr->IvMac(); ipactr++)
+        {
+            PACTR pactrOther;
+            pglpactr->Get(ipactr, &pactrOther);
+            if (pactrOther != pactr && pactrOther->FOnStage())
+            {
+                pactrOther->Pbody()->Hide();
+                vecHidden.push_back(pactrOther);
+            }
+        }
+        pmvie->Pbwld()->SetIgnoreBackgroundDepth(fTrue);
+        fOk = _FCountActorPixels(pmvie, pactr, &rcView, rcBox, &cpixWhole);
+        pmvie->Pbwld()->SetIgnoreBackgroundDepth(fFalse);
+        for (PACTR pactrOther : vecHidden)
+            pactrOther->Pbody()->Show();
+    }
+    EnsureRendered(pmvie);
+    if (!fOk)
+        return fFalse;
+    *pdFraction = cpixWhole == 0 ? 0 : LwMin(cpixVisible, cpixWhole) / static_cast<double>(cpixWhole);
+    return fTrue;
+}
+
 static std::string _StrDefaultCaptureDir(void)
 {
     std::error_code ec;
@@ -928,7 +1017,11 @@ static bool _FCmdDescribeScene(Request &req)
     {
         PACTR pactr;
         pglpactr->Get(ipactr, &pactr);
-        jsonActors.Push(JsonActor(pmvie, pactr, stage, camera));
+        Json jsonActor = JsonActor(pmvie, pactr, stage, camera);
+        double dVisible;
+        if (pactr->FOnStage() && pactr->FIsInView() && FVisibleFraction(pmvie, pactr, &dVisible))
+            jsonActor.Set("visible_fraction", std::round(dVisible * 100) / 100);
+        jsonActors.Push(jsonActor);
     }
     req.result.Set("actors", jsonActors);
 

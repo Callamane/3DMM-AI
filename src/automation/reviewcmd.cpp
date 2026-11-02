@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <map>
 #include <set>
 
 ASSERTNAME
@@ -27,7 +28,8 @@ const int32_t kcfrmSampleStep = 3; // render every half second
 const int32_t kcfrmSpeech = 12;    // a line counts as being spoken for two seconds after it starts
 const double kdSecStaticMax = 8;   // flag longer stretches where nothing changes
 const double kdSecSceneMin = 1.5;  // shorter scenes flash by
-const double kdHiddenMin = 0.6;    // covered this much by a nearer actor counts as hidden
+const double kdVisibleMin = 0.4;   // less of its silhouette showing counts as hidden
+const double kdOccluderMin = 0.3;  // box overlap that names a nearer actor as the one in the way
 const int32_t kcTinyDivisor = 6;   // shorter than this fraction of the view is hard to see
 const double kdMoveMin = 0.02;     // metres per frame; less is standing still
 const int32_t kcissueMax = 100;    // keep the reply readable
@@ -51,7 +53,7 @@ struct ActorTrack
     std::vector<int32_t> vecSpeechStarts; // frames where its sounds start
     int32_t csampleOnStage = 0;
     std::vector<int32_t> vecSeen, vecOut, vecCutOff, vecHidden, vecTiny; // sampled frames
-    std::string strHiddenBy;
+    std::map<int32_t, std::string> mapHiddenBy;                          // what is in the way at each hidden sample
 };
 
 static std::string _StrSeconds(double dSec)
@@ -255,18 +257,25 @@ static bool _FReviewScene(Request &req, PMVIE pmvie, int32_t iscen, std::vector<
             Vec3 pos(DFromBrs(xr), DFromBrs(yr), DFromBrs(zr));
             vecInShot.push_back({itrack, box, (pos - camera.position).Length()});
         }
+        // Hidden: most of its silhouette is covered, by scenery or a nearer
+        // actor. Bounding boxes alone overstate it: a half-covered actor
+        // with a clear face is fine.
         for (const InShot &back : vecInShot)
         {
+            double dVisible;
+            if (!FVisibleFraction(pmvie, vecTracks[back.itrack].pactr, &dVisible) || dVisible >= kdVisibleMin)
+                continue;
+            std::string strBy = "the scenery";
             for (const InShot &front : vecInShot)
             {
-                if (front.dDistance < back.dDistance && DCoveredFraction(back.box, front.box) >= kdHiddenMin)
+                if (front.dDistance < back.dDistance && DCoveredFraction(back.box, front.box) >= kdOccluderMin)
                 {
-                    vecTracks[back.itrack].vecHidden.push_back(nfrm);
-                    if (vecTracks[back.itrack].strHiddenBy.empty())
-                        vecTracks[back.itrack].strHiddenBy = vecTracks[front.itrack].strName;
+                    strBy = vecTracks[front.itrack].strName;
                     break;
                 }
             }
+            vecTracks[back.itrack].vecHidden.push_back(nfrm);
+            vecTracks[back.itrack].mapHiddenBy[nfrm] = strBy;
         }
     }
 
@@ -302,9 +311,10 @@ static bool _FReviewScene(Request &req, PMVIE pmvie, int32_t iscen, std::vector<
         for (const FrameRange &range : VecRanges(track.vecHidden, kcfrmSampleStep))
         {
             add("warning", "hidden", range, track.strName,
-                track.strName + " is mostly hidden behind " + track.strHiddenBy +
+                track.strName + " is mostly hidden behind " + track.mapHiddenBy.at(range.from) +
                     (_FSpeaking(track, range) ? " while speaking" : ""),
-                "spread the actors out sideways (x) or pick a camera from another side");
+                "move them (arrange_actors does a group), spread the actors out sideways (x) or pick a camera "
+                "from another side");
         }
         for (const FrameRange &range : VecRanges(track.vecTiny, kcfrmSampleStep))
         {
