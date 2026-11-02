@@ -51,7 +51,8 @@ std::vector<int32_t> VecChooseShots(const std::vector<std::vector<double>> &vecv
 std::vector<int32_t> VecChooseShotsPaced(const std::vector<std::vector<double>> &vecvecScore,
                                          const std::vector<int32_t> &vecBeatStart, int32_t nfrmEnd,
                                          const std::vector<bool> &vecSpeakerChange, const ShotPacing &pacing,
-                                         const std::vector<std::vector<bool>> *pvecvecReadable)
+                                         const std::vector<std::vector<bool>> *pvecvecReadable,
+                                         const std::vector<std::vector<bool>> *pvecvecJump)
 {
     size_t cbeat = vecvecScore.size();
     if (cbeat == 0 || vecvecScore[0].empty() || vecBeatStart.size() < cbeat)
@@ -98,7 +99,10 @@ std::vector<int32_t> VecChooseShotsPaced(const std::vector<std::vector<double>> 
             {
                 bool fSame = icamPrev == icam;
                 int32_t nfrmStart = fSame ? vecvecShotStart[ibeat - 1][icamPrev] : vecBeatStart[ibeat];
-                double d = vecvecBest[ibeat - 1][icamPrev] - (fSame ? 0 : dCut) - holdCost(nfrmStart, ibeat);
+                bool fJump = !fSame && pvecvecJump != nullptr && icamPrev < pvecvecJump->size() &&
+                             icam < (*pvecvecJump)[icamPrev].size() && (*pvecvecJump)[icamPrev][icam];
+                double d = vecvecBest[ibeat - 1][icamPrev] - (fSame ? 0 : dCut) - (fJump ? pacing.dJumpPenalty : 0) -
+                           holdCost(nfrmStart, ibeat);
                 if (d > dBest)
                 {
                     dBest = d;
@@ -166,6 +170,32 @@ void HoldShortShots(const std::vector<int32_t> &vecBeatStart, int32_t nfrmEnd, i
         for (size_t ibeat = ibeatShort; ibeat < ibeatShortLim; ibeat++)
             vecCamera[ibeat] = icam;
     }
+}
+
+// Cameras aimed closer than this (cosine of 20 degrees) film the same view
+const double kdCosSameView = 0.94;
+
+bool FSameView(double x1, double z1, double xDir1, double zDir1, double x2, double z2, double xDir2, double zDir2,
+               double dMaxMetres)
+{
+    return std::hypot(x2 - x1, z2 - z1) <= dMaxMetres && xDir1 * xDir2 + zDir1 * zDir2 >= kdCosSameView;
+}
+
+const double kdSameViewMetres = 1.0;
+
+bool FCamerasFilmSameView(const CameraModel &camera1, const CameraModel &camera2)
+{
+    // BRender cameras look down -Z; compare where they aim on the floor
+    auto aim = [](const CameraModel &camera, double *px, double *pz) {
+        double d = std::hypot(camera.axisZ.x, camera.axisZ.z);
+        *px = d > 1e-9 ? -camera.axisZ.x / d : 0;
+        *pz = d > 1e-9 ? -camera.axisZ.z / d : 0;
+    };
+    double x1, z1, x2, z2;
+    aim(camera1, &x1, &z1);
+    aim(camera2, &x2, &z2);
+    return FSameView(camera1.position.x / kdwrPerMetre, camera1.position.z / kdwrPerMetre, x1, z1,
+                     camera2.position.x / kdwrPerMetre, camera2.position.z / kdwrPerMetre, x2, z2, kdSameViewMetres);
 }
 
 // Sine of the angle from the line under which a camera counts as on it

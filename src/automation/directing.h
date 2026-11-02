@@ -11,6 +11,8 @@
 #ifndef AUTOMATION_DIRECTING_H
 #define AUTOMATION_DIRECTING_H
 
+#include "stage.h"
+
 #include <cstdint>
 #include <vector>
 
@@ -41,11 +43,15 @@ struct ShotPacing
     // us) may trail the best by this much instead; it scores below a
     // two-shot that shows everyone but is still a shot an editor cuts to
     double dComparableReadable = 0;
+    // Extra cost of a jump cut: between two cameras pvecvecJump marks as
+    // filming the same view (on some sets only the backdrop differs)
+    double dJumpPenalty = 0;
 };
 std::vector<int32_t> VecChooseShotsPaced(const std::vector<std::vector<double>> &vecvecScore,
                                          const std::vector<int32_t> &vecBeatStart, int32_t nfrmEnd,
                                          const std::vector<bool> &vecSpeakerChange, const ShotPacing &pacing,
-                                         const std::vector<std::vector<bool>> *pvecvecReadable = nullptr);
+                                         const std::vector<std::vector<bool>> *pvecvecReadable = nullptr,
+                                         const std::vector<std::vector<bool>> *pvecvecJump = nullptr);
 
 // Beats start at vecBeatStart (ascending frames) and the last ends before
 // nfrmEnd. A shot (a run of beats on one camera) shorter than cfrmMin
@@ -60,8 +66,15 @@ void HoldShortShots(const std::vector<int32_t> &vecBeatStart, int32_t nfrmEnd, i
 // from the same side of the line through them as the reference camera at
 // (xRef, zRef), so the two keep their places on screen (floor coordinates).
 // A camera or reference (nearly) along the line is on both sides.
-bool FSameSideOfLine(double xA, double zA, double xB, double zB, double xRef, double zRef, double xCam,
-                     double zCam);
+bool FSameSideOfLine(double xA, double zA, double xB, double zB, double xRef, double zRef, double xCam, double zCam);
+
+// Whether two cameras film the same view, so a cut between them is a jump
+// (the 30-degree rule): within dMaxMetres of each other on the floor and
+// aimed within 20 degrees. Directions are unit vectors on the floor.
+bool FSameView(double x1, double z1, double xDir1, double zDir1, double x2, double z2, double xDir2, double zDir2,
+               double dMaxMetres);
+// FSameView for two cameras as the engine describes them (within a metre)
+bool FCamerasFilmSameView(const CameraModel &camera1, const CameraModel &camera2);
 
 // How well a subject's on-screen height (share of the view height, which
 // can pass 1 when the legs are cropped) suits a shot: 1 at dIdeal, falling

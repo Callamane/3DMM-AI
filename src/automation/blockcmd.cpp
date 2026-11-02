@@ -71,6 +71,10 @@ static std::vector<std::vector<bool>> _VecCoverage(PMVIE pmvie, const std::vecto
         CameraModel camera;
         if (icam == icamMain || !pbkgd->FSetCamera(pmvie->Pbwld(), icam) || !FGetCamera(pmvie, &camera))
             continue;
+        // Filming the same view as the main camera (only the backdrop differs)
+        // is no other angle: cutting to it is a jump cut
+        if (FCamerasFilmSameView(cameraMain, camera))
+            continue;
         EnsureRendered(pmvie);
         for (size_t i = 0; i < vecActors.size(); i++)
         {
@@ -342,8 +346,11 @@ static bool _FCmdArrangeActors(Request &req)
             vecvecShowsGood = vecvecShows;
         }
     }
-    // Settle on the chosen spot (or the last tried, with the problem found)
+    // Settle on the chosen spot (or the last tried, with the problem found:
+    // still worth knowing which other cameras see them from there)
     double xUsed = vecSpotsTried.back().x, zUsed = vecSpotsTried.back().z;
+    if (ispotGood == vecSpotsTried.size() && fCoverage)
+        vecvecShowsGood = _VecCoverage(pmvie, vecActors, rcView, icamMain);
     if (ispotGood < vecSpotsTried.size())
     {
         strProblem.clear();

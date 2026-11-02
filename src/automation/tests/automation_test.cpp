@@ -540,6 +540,32 @@ TEST(AutomationDirecting, FramingPrefersHalfTheFrame)
     EXPECT_LT(DFramingScore(1.3, 0.8), DFramingScore(0.5, 0.8));
 }
 
+TEST(AutomationDirecting, NoJumpCutsBetweenTheSameView)
+{
+    // Cameras 0 and 1 film the same view (a backdrop swap); 2 is a real
+    // other angle that scores a little lower
+    std::vector<std::vector<double>> score{{7, 7.2, 6.5}, {7.2, 7, 6.5}, {7, 7.2, 6.5}, {7.2, 7, 6.5}};
+    std::vector<int32_t> starts{1, 30, 60, 90};
+    std::vector<bool> change{false, true, true, true};
+    ShotPacing pacing{0.4, 0.25, 36, 0.05, 0.75};
+    auto unaware = VecChooseShotsPaced(score, starts, 120, change, pacing);
+    EXPECT_NE(std::find(unaware.begin() + 1, unaware.end(), unaware[0] == 0 ? 1 : 0), unaware.end())
+        << "without knowing, it swaps between the twins";
+    std::vector<std::vector<bool>> jump{{false, true, false}, {true, false, false}, {false, false, false}};
+    pacing.dJumpPenalty = 3;
+    auto cams = VecChooseShotsPaced(score, starts, 120, change, pacing, nullptr, &jump);
+    for (size_t i = 1; i < cams.size(); i++)
+        EXPECT_FALSE(jump[cams[i - 1]][cams[i]]) << "cut " << cams[i - 1] << " -> " << cams[i];
+}
+
+TEST(AutomationDirecting, SameViewMeansCloseAndAimedAlike)
+{
+    // Positions in metres, directions as unit vectors on the floor
+    EXPECT_TRUE(FSameView(0, 0, 0, 1, 0.3, 0.2, 0.1, 0.995, 1.0));
+    EXPECT_FALSE(FSameView(0, 0, 0, 1, 3, 0, 0, 1, 1.0)) << "moved sideways";
+    EXPECT_FALSE(FSameView(0, 0, 0, 1, 0, 0, 0.5, 0.866, 1.0)) << "turned 30 degrees";
+}
+
 TEST(AutomationDirecting, CamerasStayOnOneSideOfTheLine)
 {
     // A at (0, 0) and B at (2, 0); the opening camera films them from z < 0

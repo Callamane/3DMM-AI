@@ -53,10 +53,12 @@ const double kdFacingSide = 110;     // profile
 const double kdScoreMissing = -3;
 const double kdFaceReadableShare = 1.5; // facing credit scales with framing up to this (2/3 framing = full)
 const double kdComparableShot = 0.75;   // pacing only cuts between angles this close to the best
+const double kdHeightReadable = 0.3;    // a speaker smaller than this share of the frame height can't be read
 const double kdHeightSingle = 0.35;     // a clean single: the speaker at least this share of the frame height,
 const double kdVisibleSingle = 0.8;     // this much of them showing, facing us and nobody against the lens
 const double kdLensShare = 0.45;        // another actor covering this much of the frame blocks the shot
 const double kdScoreLensBlocked = -2.5; // speaker not in shot
+const double kdJumpPenalty = 3;         // a cut between cameras that film the same view
 const double kdScoreCrossLine = -2;     // filmed from across the speaker's line with their partner
 const double kdScoreOtherSide = -10;    // a beat pinned to one camera, from another
 
@@ -100,9 +102,10 @@ static bool _FLineOfAction(const std::vector<PACTR> &vecActors, int32_t iSpeaker
 
 // Scores the current camera for a beat at the current frame
 static double _DScoreShot(PMVIE pmvie, const std::vector<PACTR> &vecActors, int32_t iSpeaker, RC rcView,
-                          const ShotStyle &style, bool *pfFaceAway, bool *pfSingle)
+                          const ShotStyle &style, bool *pfFaceAway, bool *pfSingle, double *pdHeight)
 {
     *pfSingle = false;
+    *pdHeight = 0;
     CameraModel camera;
     if (!FGetCamera(pmvie, &camera))
         return kdScoreMissing;
@@ -143,6 +146,7 @@ static double _DScoreShot(PMVIE pmvie, const std::vector<PACTR> &vecActors, int3
             // 0 in the middle of the frame, 1 at either edge
             double dOffCentre = std::fabs((rc.xpLeft + rc.xpRight) / 2.0 - rcView.Dxp() / 2.0) / (rcView.Dxp() / 2.0);
             double dHeightShare = static_cast<double>(rc.Dyp()) / rcView.Dyp();
+            *pdHeight = dHeightShare;
             double dFraming = DFramingScore(dHeightShare, style.dIdealHeight);
             *pfSingle = dHeightShare >= kdHeightSingle && degFacing <= kdFacingFront && dVisible >= kdVisibleSingle;
             // A face too small to read earns little for facing us
@@ -340,6 +344,22 @@ static bool _FCmdAutoCamera(Request &req)
     std::vector<std::vector<bool>> vecvecFaceAway(vecBeats.size(), std::vector<bool>(vecCams.size(), false));
     std::vector<std::vector<bool>> vecvecSingle(vecBeats.size(), std::vector<bool>(vecCams.size(), true));
     std::vector<std::vector<bool>> vecvecCrosses(vecBeats.size(), std::vector<bool>(vecCams.size(), false));
+    std::vector<std::vector<double>> vecvecHeight(vecBeats.size(), std::vector<double>(vecCams.size(), 1e9));
+    // Cameras that film the same view (on some sets only the backdrop
+    // differs): a cut between them is a jump, not a new angle
+    std::vector<std::vector<bool>> vecvecJump(vecCams.size(), std::vector<bool>(vecCams.size(), false));
+    {
+        std::vector<CameraModel> vecModels(vecCams.size());
+        std::vector<bool> vecKnown(vecCams.size(), false);
+        for (size_t icam = 0; icam < vecCams.size(); icam++)
+            vecKnown[icam] = pbkgd->FSetCamera(pmvie->Pbwld(), vecCams[icam]) && FGetCamera(pmvie, &vecModels[icam]);
+        for (size_t i = 0; i < vecCams.size(); i++)
+        {
+            for (size_t j = 0; j < vecCams.size(); j++)
+                vecvecJump[i][j] =
+                    i != j && vecKnown[i] && vecKnown[j] && FCamerasFilmSameView(vecModels[i], vecModels[j]);
+        }
+    }
     for (size_t ibeat = 0; ibeat < vecBeats.size(); ibeat++)
     {
         int32_t nfrmLim = ibeat + 1 < vecBeats.size() ? vecBeats[ibeat + 1].nfrmStart : nfrmLast + 1;
@@ -356,7 +376,10 @@ static bool _FCmdAutoCamera(Request &req)
                 if (!pbkgd->FSetCamera(pmvie->Pbwld(), vecCams[icam]))
                     return FFailEngine(req, "could not try camera " + std::to_string(vecCams[icam]));
                 bool fFaceAway = false, fSingle = false;
-                double d = _DScoreShot(pmvie, vecActors, vecBeats[ibeat].itrack, rcView, *pstyle, &fFaceAway, &fSingle);
+                double dHeight;
+                double d = _DScoreShot(pmvie, vecActors, vecBeats[ibeat].itrack, rcView, *pstyle, &fFaceAway, &fSingle,
+                                       &dHeight);
+                vecvecHeight[ibeat][icam] = std::fmin(vecvecHeight[ibeat][icam], dHeight);
                 CameraModel camera;
                 if (fLine && FGetCamera(pmvie, &camera) &&
                     !FSameSideOfLine(posSpeaker.x, posSpeaker.z, posPartner.x, posPartner.z, cameraOpening.position.x,
@@ -402,9 +425,10 @@ static bool _FCmdAutoCamera(Request &req)
                       static_cast<int32_t>(pstyle->dHoldSeconds * kfps),
                       pstyle->dHoldPenaltyPerSec / kfps,
                       kdComparableShot,
-                      pstyle->dComparableSingle};
+                      pstyle->dComparableSingle,
+                      kdJumpPenalty};
     std::vector<int32_t> vecChoice =
-        VecChooseShotsPaced(vecvecScore, vecStarts, nfrmLast + 1, vecSpeakerChange, pacing, &vecvecSingle);
+        VecChooseShotsPaced(vecvecScore, vecStarts, nfrmLast + 1, vecSpeakerChange, pacing, &vecvecSingle, &vecvecJump);
     std::vector<int32_t> vecBeatStart;
     for (const Beat &beat : vecBeats)
         vecBeatStart.push_back(beat.nfrmStart);
@@ -463,6 +487,23 @@ static bool _FCmdAutoCamera(Request &req)
             json.Set("warning", "the speaker has their back to this camera and no angle shows their face; turn "
                                 "them toward the camera a little (rotate_actor) or re-block (arrange_actors), then "
                                 "run auto_camera again");
+        }
+        else if (pstyle->dComparableSingle > 0)
+        {
+            // Coverage promises faces: a line from a figure too small to read
+            // (a crane shot of the street) is a problem, not a style
+            bool fSmall = false;
+            for (size_t ibeatT = ibeat; ibeatT < ibeatLim; ibeatT++)
+            {
+                fSmall = fSmall || (vecBeats[ibeatT].itrack >= 0 && vecBeats[ibeatT].fSpeaks &&
+                                    vecvecHeight[ibeatT][vecChoice[ibeat]] < kdHeightReadable);
+            }
+            if (fSmall)
+            {
+                json.Set("warning", "the speaker is under 30% of the picture's height here, too small for their "
+                                    "face to read; block the group closer to the camera (arrange_actors) or stage "
+                                    "the scene for another camera");
+            }
         }
         jsonShots.Push(json);
         ccut++;
