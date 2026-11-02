@@ -286,6 +286,40 @@ async fn script_scene_builds_a_reviewed_scene() -> Result<()> {
         "{kinds:?}"
     );
 
+    // Revising: a scene rebuilt in place keeps its position
+    let state = c.tool("get_state", json!({"all_scenes": true})).await?;
+    let count = state["movie"]["scene_count"]
+        .as_i64()
+        .context("scene_count")?;
+    let revised = json!({"background": "HH-Lab", "replace": 0, "preview": false, "cast": cast,
+                         "lines": [{"who": "Ann", "says": "Revised."}]});
+    let replaced = c.tool("script_scene", revised).await?;
+    ensure!(
+        replaced["scene_index"] == 0 && replaced["replaced"] == true,
+        "{replaced}"
+    );
+    let state = c.tool("get_state", json!({"all_scenes": true})).await?;
+    ensure!(
+        state["movie"]["scene_count"] == count,
+        "same number of scenes: {state}"
+    );
+    ensure!(
+        state["scenes"][0]["background"]
+            .as_str()
+            .is_some_and(|b| b.contains("Lab")),
+        "{state}"
+    );
+    let err = c
+        .tool(
+            "script_scene",
+            json!({"background": "diner", "replace": 99, "cast": cast,
+                                     "lines": [{"who": "Ann", "says": "x"}]}),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    ensure!(err.contains("existing scene"), "{err}");
+
     c.tool("quit", json!({"discard_changes": true})).await.ok();
     Ok(())
 }

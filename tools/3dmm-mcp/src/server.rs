@@ -357,7 +357,36 @@ impl ThreeDmmServer {
     ) -> anyhow::Result<Vec<ContentBlock>> {
         let mut script = script::parse(&args).map_err(anyhow::Error::msg)?;
         script::assign_voices(&mut script.cast, &speech::installed_voices().await);
-        let result = self.build_scene(&script, true, timeout).await?;
+        // Rebuilding a scene in place: check the index before building
+        let replace = args.get("replace").and_then(Value::as_i64);
+        if let Some(index) = replace {
+            let state = self.bridge_call("get_state", json!({}), timeout).await?;
+            let count = state["movie"]["scene_count"].as_i64().unwrap_or(0);
+            if !(0..count).contains(&index) {
+                anyhow::bail!(
+                    "'replace' must be an existing scene's index; the movie has {count} scene(s) (0-{})",
+                    count - 1
+                );
+            }
+        }
+        let mut result = self.build_scene(&script, true, timeout).await?;
+        if let Some(index) = replace {
+            // The new scene was added at the end: drop the old one and move
+            // the new one into its place
+            self.bridge_call("delete_scene", json!({"index": index}), timeout)
+                .await?;
+            let built = result["scene_index"].as_i64().unwrap_or(index + 1) - 1;
+            if built != index {
+                self.bridge_call("move_scene", json!({"from": built, "to": index}), timeout)
+                    .await?;
+            }
+            result["scene_index"] = json!(index);
+            result["replaced"] = json!(true);
+            let review = self
+                .bridge_call("review_movie", json!({"scene": index}), timeout)
+                .await?;
+            result["review"] = json!({"verdict": review["verdict"], "issues": review["issues"]});
+        }
         let mut content = Vec::new();
         if args.get("preview").and_then(Value::as_bool).unwrap_or(true) {
             content.extend(

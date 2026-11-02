@@ -805,6 +805,7 @@ pub fn all_tools() -> Vec<ToolSpec> {
                 {
                     let mut properties = scene_script_properties();
                     properties["preview"] = json!({"type": "boolean", "default": true, "description": "Return a storyboard of the new scene (one picture) with the result."});
+                    properties["replace"] = json!({"type": "integer", "minimum": 0, "description": "Rebuild this existing scene in place from the script (to revise a scene: edit the script and run it again). The old version is checkpointed first."});
                     properties
                 },
                 &["background", "cast", "lines"],
@@ -1073,7 +1074,7 @@ pub fn all_tools() -> Vec<ToolSpec> {
 /// Short workflow guide, served as an MCP resource and prompt.
 pub const WORKFLOW_GUIDE: &str = r#"# Making a movie with 3D Movie Maker
 
-0. **Fastest start** — `script_movie(scenes: [...], export: ".../movie.mp4")` builds and exports a whole movie in one call; `script_scene(background, cast, lines)` does one scene (set, cast, blocking, dialogue, staging, sound, cuts, review). Then refine with the tools below.
+0. **Fastest start** — `script_movie(scenes: [...], export: ".../movie.mp4")` builds and exports a whole movie in one call; `script_scene(background, cast, lines)` does one scene (set, cast, blocking, dialogue, staging, sound, cuts, review). To revise a scene, edit its script and run `script_scene(replace: index)`. Then refine with the tools below.
 1. **Plan** — movies run at 6 frames per second; a 30 s movie is ~180 frames across all scenes. Each scene has its own frame numbers from 1 and lasts as long as its longest-living actor.
 2. **Pick a set** — `list_backgrounds` (each has a description; `filter: "diner"` works). `preview_cameras(background)` shows every camera angle on one image without changing the movie.
 3. **Scene** — `add_scene(background, camera)`. A new movie has no scenes; add one before anything else.

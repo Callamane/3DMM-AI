@@ -612,6 +612,11 @@ on the way:
   MP4. "Make me a 30-second movie of two guys arguing in a diner" became
   one call: two scenes, 31.5 s, subtitles, music, a throw and an exit,
   built and exported in 7.4 s with no review warnings.
+* `script_scene(replace: i)` rebuilds scene i in place: the index is checked
+  first, the new scene is built at the end (with a checkpoint), then the old
+  scene is deleted and the new one moved into its position, and the review
+  is re-run for the final index. The earlier scene's transition into it is
+  untouched; the new script's transition replaces the old one's.
 * `script_scene` and `script_movie` return a storyboard image with their
   report (the new scene, or the whole movie with `all_scenes`), so the
   client sees what it made without another call; `preview: false` skips
