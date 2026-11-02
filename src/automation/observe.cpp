@@ -167,7 +167,7 @@ static void _Annotate(Image8 *pimg, PMVIE pmvie, const std::vector<PngColor> &pa
         int32_t dx = DxText(strLabel, 1);
         int32_t x = LwBound((rc.xpLeft + rc.xpRight - dx) / 2, 1, LwMax(1, pimg->width - dx - 1));
         int32_t y = LwBound(rc.ypTop - 9, 1, pimg->height - 7);
-        DrawText(pimg, x, y, strLabel, colors.bAxis, colors.bOutline, 1);
+        DrawLabel(pimg, x, y, strLabel, colors.bAxis, colors.bOutline, 1);
     }
 }
 
@@ -478,7 +478,7 @@ static bool _FCmdPreviewCameras(Request &req)
         }
         int32_t col = static_cast<int32_t>(i) % kcColumnsPreview, row = static_cast<int32_t>(i) / kcColumnsPreview;
         int32_t x = col * (imgSmall.width + kdzpGapPreview), y = row * (imgSmall.height + kdzpGapPreview);
-        DrawText(&imgSmall, 4, 4, "CAM " + std::to_string(vecCams[i]), bText, bOutline, 2);
+        DrawLabel(&imgSmall, 4, 4, "CAM " + std::to_string(vecCams[i]), bText, bOutline, 2);
         Blit(&imgSheet, imgSmall, x, y);
         Json jsonCell = Json::MakeObject();
         jsonCell.Set("camera", vecCams[i]);
@@ -673,7 +673,7 @@ static bool _FCmdStoryboard(Request &req)
             snprintf(rgch, sizeof(rgch), "S%d F%d  %.1fS", cell.iscen, cell.nfrm, cell.dSec);
         else
             snprintf(rgch, sizeof(rgch), "F%d  %.1fS", cell.nfrm, cell.dSec);
-        DrawText(&imgSmall, 4, 4, rgch, bText, bOutline, 2);
+        DrawLabel(&imgSmall, 4, 4, rgch, bText, bOutline, 2);
         int32_t col = i % kcColumnsPreview, row = i / kcColumnsPreview;
         Blit(&imgSheet, imgSmall, col * (imgSmall.width + kdzpGapPreview), row * (imgSmall.height + kdzpGapPreview));
         if (fAllScenes)

@@ -242,7 +242,7 @@ static bool _FCmdAutoCamera(Request &req)
                 double d = _DScoreShot(pmvie, vecActors, vecBeats[ibeat].itrack, rcView, *pstyle, &fFaceAway);
                 if (fFaceAway)
                     vecvecFaceAway[ibeat][icam] = true;
-                vecvecScore[ibeat][icam] = std::min(vecvecScore[ibeat][icam], d);
+                vecvecScore[ibeat][icam] = std::fmin(vecvecScore[ibeat][icam], d);
             }
         }
     }

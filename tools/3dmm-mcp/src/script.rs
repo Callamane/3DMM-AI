@@ -521,6 +521,20 @@ pub fn parse_say_voices(output: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Installed Windows voices from the "Name|en-US" lines the SAPI listing
+/// prints, with locales written like macOS's ("en_US")
+pub fn parse_sapi_voices(output: &str) -> Vec<(String, String)> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let (name, culture) = line.trim().split_once('|')?;
+            let (name, culture) = (name.trim(), culture.trim());
+            (!name.is_empty() && culture.len() >= 2)
+                .then(|| (name.to_string(), culture.replace('-', "_")))
+        })
+        .collect()
+}
+
 /// Voices that sound like ordinary characters, in the order they are handed
 /// out when the script doesn't choose
 const PREFERRED_VOICES: &[&str] = &[
@@ -799,6 +813,36 @@ mod tests {
         let voices = parse_say_voices(out);
         assert_eq!(voices.len(), 3);
         assert_eq!(voices[1], ("Eddy (English (UK))".into(), "en_GB".into()));
+    }
+
+    #[test]
+    fn reads_windows_voice_list() {
+        let out =
+            "Microsoft David Desktop|en-US\r\nMicrosoft Hazel Desktop|en-GB\r\n\r\nbroken line\r\n";
+        let voices = parse_sapi_voices(out);
+        assert_eq!(
+            voices,
+            vec![
+                ("Microsoft David Desktop".to_string(), "en_US".to_string()),
+                ("Microsoft Hazel Desktop".to_string(), "en_GB".to_string()),
+            ]
+        );
+        // English Windows voices are handed out like any other
+        let mut cast = vec![
+            CastMember {
+                name: "A".into(),
+                actor: "Frank".into(),
+                voice: None,
+            },
+            CastMember {
+                name: "B".into(),
+                actor: "Bella".into(),
+                voice: None,
+            },
+        ];
+        assign_voices(&mut cast, &voices);
+        assert_ne!(cast[0].voice, cast[1].voice);
+        assert!(cast.iter().all(|c| c.voice.is_some()));
     }
 
     #[test]

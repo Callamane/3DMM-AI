@@ -127,8 +127,10 @@ The server finds the app in `dist/` next to it, preferring release builds; set `
 `THREEDMM_NO_AUTOLAUNCH=1` (require an already-running app). `export_video` needs ffmpeg (`brew install ffmpeg`, or set
 `THREEDMM_FFMPEG`).
 
-Windows: the bridge is written to be portable (Winsock on Windows, BSD sockets elsewhere; no macOS-only APIs) and
-`speak_line` uses Windows' built-in speech synthesizer, but so far it has only been built and tested on macOS.
+Windows: the bridge is written to be portable (Winsock on Windows, BSD sockets elsewhere; no macOS-only APIs, no
+names that clash with `<windows.h>` macros), and speech uses Windows' built-in synthesizer, with its installed voices
+handed out to characters. The MCP server type-checks cleanly for `x86_64-pc-windows-msvc`. So far the app and bridge
+have only been built and run on macOS; a Windows build is the next thing to try.
 
 ### A whole movie in one call
 

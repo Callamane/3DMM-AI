@@ -202,7 +202,7 @@ TEST(AutomationStage, ProjectionAndFloorRayAgree)
 TEST(AutomationImage, DrawsTextLinesAndDownscales)
 {
     Image8 img(40, 20, 0);
-    int32_t dx = DrawText(&img, 2, 2, "X=1", 5, 9, 1);
+    int32_t dx = DrawLabel(&img, 2, 2, "X=1", 5, 9, 1);
     EXPECT_EQ(dx, DxText("X=1", 1));
     int32_t cFore = 0, cOutline = 0;
     for (uint8_t b : img.pixels)

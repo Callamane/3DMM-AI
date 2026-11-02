@@ -48,8 +48,10 @@ void FillRect(Image8 *pimg, int32_t x, int32_t y, int32_t dx, int32_t dy, uint8_
 // Draws text with the built-in 3x5 font (digits, A-Z, a few symbols; other
 // characters render as blanks), scaled by `scale`, with a 1-pixel outline
 // in bOutline for legibility over any background. Returns the text width.
-int32_t DrawText(Image8 *pimg, int32_t x, int32_t y, const std::string &str, uint8_t bFore, uint8_t bOutline,
-                 int32_t scale = 2);
+// (Not called DrawText: that is a macro in <windows.h>, which the engine
+// headers include on Windows.)
+int32_t DrawLabel(Image8 *pimg, int32_t x, int32_t y, const std::string &str, uint8_t bFore, uint8_t bOutline,
+                  int32_t scale = 2);
 int32_t DxText(const std::string &str, int32_t scale = 2);
 
 // Halves the size by averaging is impossible with a palette, so this keeps

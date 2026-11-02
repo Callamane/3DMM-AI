@@ -121,8 +121,8 @@ static void _DrawGlyphs(Image8 *pimg, int32_t x, int32_t y, const std::string &s
     }
 }
 
-int32_t DrawText(Image8 *pimg, int32_t x, int32_t y, const std::string &str, uint8_t bFore, uint8_t bOutline,
-                 int32_t scale)
+int32_t DrawLabel(Image8 *pimg, int32_t x, int32_t y, const std::string &str, uint8_t bFore, uint8_t bOutline,
+                  int32_t scale)
 {
     for (int32_t dy = -1; dy <= 1; dy++)
     {
@@ -263,7 +263,7 @@ void DrawStageGrid(Image8 *pimg, const CameraModel &camera, const StageFrame &st
         if (fOverlap)
             continue;
         vecPlaced.push_back({xLabel, yLabel, dx, 5});
-        DrawText(pimg, xLabel, yLabel, label.str, colors.bText, colors.bOutline, 1);
+        DrawLabel(pimg, xLabel, yLabel, label.str, colors.bText, colors.bOutline, 1);
     }
 }
 

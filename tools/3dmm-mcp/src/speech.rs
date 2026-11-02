@@ -9,18 +9,34 @@ use tokio::process::Command;
 
 static NEXT_LINE: AtomicU32 = AtomicU32::new(1);
 
-/// Installed voices as (name, locale). Empty where they can't be listed
-/// (Windows voices are chosen by SAPI's default).
+/// Installed voices as (name, locale like "en_US"): macOS `say`, Windows
+/// SAPI. Empty where they can't be listed.
 pub async fn installed_voices() -> Vec<(String, String)> {
-    if !cfg!(target_os = "macos") {
-        return Vec::new();
+    if cfg!(target_os = "macos") {
+        return match Command::new("say").arg("-v").arg("?").output().await {
+            Ok(output) if output.status.success() => {
+                crate::script::parse_say_voices(&String::from_utf8_lossy(&output.stdout))
+            }
+            _ => Vec::new(),
+        };
     }
-    match Command::new("say").arg("-v").arg("?").output().await {
-        Ok(output) if output.status.success() => {
-            crate::script::parse_say_voices(&String::from_utf8_lossy(&output.stdout))
-        }
-        _ => Vec::new(),
+    if cfg!(target_os = "windows") {
+        let script = "Add-Type -AssemblyName System.Speech; \
+            $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; \
+            $s.GetInstalledVoices() | Where-Object { $_.Enabled } | \
+            ForEach-Object { $_.VoiceInfo.Name + '|' + $_.VoiceInfo.Culture.Name }; $s.Dispose()";
+        return match Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", script])
+            .output()
+            .await
+        {
+            Ok(output) if output.status.success() => {
+                crate::script::parse_sapi_voices(&String::from_utf8_lossy(&output.stdout))
+            }
+            _ => Vec::new(),
+        };
     }
+    Vec::new()
 }
 
 /// Synthesizes `text` to a new WAV file and returns its path.
