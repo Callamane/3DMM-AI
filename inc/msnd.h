@@ -176,14 +176,19 @@ class MSND : public MSND_PAR
         AssertThis(0);
         return _fNoSound;
     }
-    // Finds the chunk holding the WAV/MP3 or MIDI data (used to export audio)
-    bool FFindSndData(CTG *pctg, PBLCK pblck)
+    // Finds the chunk holding the WAV/MP3 or MIDI data (used to export audio).
+    // *ppcrf/*pcno identify the data chunk.
+    bool FFindSndData(CTG *pctg, PBLCK pblck, PCRF *ppcrf = pvNil, CNO *pcno = pvNil)
     {
         AssertThis(0);
         PCRF pcrf;
         if (_fNoSound != tribool::tNo || (pcrf = _prca->PcrfFindChunk(_ctgSnd, _cnoSnd)) == pvNil)
             return fFalse;
         *pctg = _ctgSnd;
+        if (ppcrf != pvNil)
+            *ppcrf = pcrf;
+        if (pcno != pvNil)
+            *pcno = _cnoSnd;
         return pcrf->Pcfl()->FFind(_ctgSnd, _cnoSnd, pblck) && pblck->FUnpackData();
     }
 
@@ -241,6 +246,17 @@ class MSQ : public MSQ_PAR
     bool FEnqueue(PMSND pmsnd, int32_t objID, bool fLoop, bool fQueue, int32_t vlm, int32_t spr, bool fActr = fFalse,
                   uint32_t dtsStart = 0, bool fLowPri = fFalse);
     void PlayMsq(void);  // Destroys queue as it plays
+    // The sounds queued so far (used to export audio)
+    int32_t Csqe(void)
+    {
+        AssertThis(0);
+        return _pglsqe->IvMac();
+    }
+    void GetSqe(int32_t isqe, SQE *psqe)
+    {
+        AssertThis(0);
+        _pglsqe->Get(isqe, psqe);
+    }
     void FlushMsq(void); // Without playing the sounds
     bool FCmdAlarm(PCMD pcmd);
 

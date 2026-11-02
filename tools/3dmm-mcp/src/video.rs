@@ -164,40 +164,40 @@ pub async fn render(manifest: &Value, out: &Path, options: &VideoOptions) -> Res
     }
     filters.push(format!("[{current}]null[vout]"));
 
-    // Audio inputs, one per cue
+    // Audio inputs, one per clip (timed by the bridge in milliseconds from
+    // the start of its scene)
     let mut audio_labels = Vec::new();
     let mut input = scenes.len();
     let mut skipped = 0usize;
     if options.audio {
-        for cue in manifest["cues"].as_array().cloned().unwrap_or_default() {
-            let file = cue["file"].as_str().unwrap_or_default();
-            let scene = cue["scene"].as_i64().unwrap_or(0);
+        for clip in manifest["clips"].as_array().cloned().unwrap_or_default() {
+            let file = clip["file"].as_str().unwrap_or_default();
+            let scene = clip["scene"].as_i64().unwrap_or(0);
             let Some(position) = scene_index.iter().position(|&s| s == scene) else {
                 skipped += 1;
                 continue;
             };
-            let frame = cue["frame"].as_f64().unwrap_or(0.0);
-            let scene_frames = durations[position] * fps;
-            let until = cue["until_frame"]
-                .as_f64()
-                .unwrap_or(scene_frames)
-                .min(scene_frames);
-            let start = plan.starts[position] + frame / fps;
-            let duration = (until - frame) / fps;
+            let scene_ms = durations[position] * 1000.0;
+            let start_ms = clip["start_ms"].as_f64().unwrap_or(0.0);
+            let end_ms = clip["end_ms"].as_f64().unwrap_or(scene_ms).min(scene_ms);
+            let offset_s = clip["offset_ms"].as_f64().unwrap_or(0.0) / 1000.0;
+            let start = plan.starts[position] + start_ms / 1000.0;
+            let duration = (end_ms - start_ms) / 1000.0;
             if file.is_empty() || duration <= 0.0 {
                 skipped += 1;
                 continue;
             }
-            if cue["loop"].as_bool().unwrap_or(false) {
+            if clip["loop"].as_bool().unwrap_or(false) {
                 args.extend(["-stream_loop".into(), "-1".into()]);
             }
             args.extend(["-i".into(), file.into()]);
             let delay_ms = (start * 1000.0).round().max(0.0) as i64;
-            let volume = cue["volume"].as_f64().unwrap_or(1.0);
+            let volume = clip["volume"].as_f64().unwrap_or(1.0);
             let label = format!("a{input}");
             filters.push(format!(
-                "[{input}:a]aformat=sample_rates=44100:channel_layouts=stereo,atrim=0:{duration:.3},\
-                 adelay={delay_ms}:all=1,volume={volume:.3}[{label}]"
+                "[{input}:a]aformat=sample_rates=44100:channel_layouts=stereo,\
+                 atrim={offset_s:.3}:{:.3},asetpts=PTS-STARTPTS,adelay={delay_ms}:all=1,volume={volume:.3}[{label}]",
+                offset_s + duration
             ));
             audio_labels.push(label);
             input += 1;

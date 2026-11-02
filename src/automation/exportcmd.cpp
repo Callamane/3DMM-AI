@@ -11,6 +11,8 @@
 #include "bridge.h"
 
 #include <cstdio>
+#include <cstring>
+#include <filesystem>
 #include <map>
 
 #ifdef KAUAI_MIDI_FLUIDSYNTH
@@ -171,50 +173,79 @@ struct SoundFile
     std::string path; // empty for silent sounds ("sound stopper") or failures
     std::string name;
     std::string note;
+    int32_t dtsLength = -1; // milliseconds, -1 if unknown
 };
 
-// Writes the sound behind a tag to dir (once per tag) and describes it.
-static SoundFile _SoundFileFor(PMVIE pmvie, TAG tag, const std::string &strDir,
-                               std::map<std::string, SoundFile> *pmapCache)
+// Length in milliseconds of a PCM WAV file's audio, or -1.
+static int32_t _DtsWav(const std::vector<uint8_t> &rgb)
 {
-    std::string strKey = std::to_string(tag.sid) + "-" + std::to_string(static_cast<uint32_t>(tag.cno));
+    if (rgb.size() < 12 || memcmp(rgb.data(), "RIFF", 4) != 0 || memcmp(rgb.data() + 8, "WAVE", 4) != 0)
+        return -1;
+    uint32_t cbPerSec = 0;
+    size_t ib = 12;
+    auto lu = [&](size_t i) {
+        return static_cast<uint32_t>(rgb[i] | (rgb[i + 1] << 8) | (rgb[i + 2] << 16) | (rgb[i + 3] << 24));
+    };
+    while (ib + 8 <= rgb.size())
+    {
+        uint32_t cb = lu(ib + 4);
+        if (memcmp(rgb.data() + ib, "fmt ", 4) == 0 && ib + 20 <= rgb.size())
+            cbPerSec = lu(ib + 16);
+        else if (memcmp(rgb.data() + ib, "data", 4) == 0 && cbPerSec > 0)
+            return static_cast<int32_t>(static_cast<uint64_t>(LwMin(cb, static_cast<uint32_t>(rgb.size() - ib - 8))) *
+                                        1000 / cbPerSec);
+        ib += 8 + cb + (cb & 1);
+    }
+    return -1;
+}
+
+// Writes the sound's data to dir (once per data chunk) and describes it.
+static SoundFile _SoundFileFor(PMSND pmsnd, const std::string &strDir, std::map<std::string, SoundFile> *pmapCache)
+{
+    SoundFile sf;
+    CTG ctg;
+    BLCK blck;
+    PCRF pcrf = pvNil;
+    CNO cno = cnoNil;
+    std::string strError;
+
+    sf.name = StrFromStn(pmsnd->Pstn());
+    if (pmsnd->FNoSound() == tribool::tYes)
+    {
+        sf.note = "silent (stops other sounds)";
+        return sf;
+    }
+    if (!pmsnd->FFindSndData(&ctg, &blck, &pcrf, &cno))
+    {
+        sf.note = "sound data not found";
+        return sf;
+    }
+
+    char rgch[64];
+    snprintf(rgch, sizeof(rgch), "%p-%u", static_cast<void *>(pcrf), static_cast<uint32_t>(cno));
+    std::string strKey = rgch;
     auto it = pmapCache->find(strKey);
     if (it != pmapCache->end())
         return it->second;
 
-    SoundFile sf;
-    if (tag.sid == ksidUseCrf && tag.pcrf == pvNil)
-        pmvie->FEnsureAutosave(&tag.pcrf);
-    if (tag.sid != ksidUseCrf)
-        vptagm->FCacheTagToHD(&tag);
-    PMSND pmsnd = (PMSND)vptagm->PbacoFetch(&tag, MSND::FReadMsnd);
-    if (pmsnd == pvNil)
-    {
-        sf.note = "could not load sound";
-        (*pmapCache)[strKey] = sf;
-        return sf;
-    }
-    sf.name = StrFromStn(pmsnd->Pstn());
-
-    CTG ctg;
-    BLCK blck;
-    std::string strError;
-    if (pmsnd->FNoSound() == tribool::tYes)
-    {
-        sf.note = "silent (stops other sounds)";
-    }
-    else if (!pmsnd->FFindSndData(&ctg, &blck))
-    {
-        sf.note = "sound data not found";
-    }
-    else if (ctg == kctgMidi)
+    std::string strLeaf = "sound-" + std::to_string(pmapCache->size());
+    if (ctg == kctgMidi)
     {
 #ifdef KAUAI_MIDI_FLUIDSYNTH
-        std::string strPath = _StrJoinPath(strDir, "sound-" + strKey + ".wav");
+        std::string strPath = _StrJoinPath(strDir, strLeaf + ".wav");
         if (_FRenderMidi(&blck, strPath, &strError))
+        {
             sf.path = strPath;
+            // Rendered at 44.1 kHz 16-bit stereo: 176400 bytes per second
+            std::error_code ec;
+            uintmax_t cb = std::filesystem::file_size(strPath, ec);
+            if (!ec && cb > 44)
+                sf.dtsLength = static_cast<int32_t>((cb - 44) * 1000 / 176400);
+        }
         else
+        {
             sf.note = strError;
+        }
 #else
         sf.note = "this build has no MIDI synthesizer, so music can't be exported";
 #endif
@@ -225,32 +256,42 @@ static SoundFile _SoundFileFor(PMVIE pmvie, TAG tag, const std::string &strDir,
         std::vector<uint8_t> rgb(blck.Cb());
         if (!rgb.empty() && blck.FReadRgb(rgb.data(), blck.Cb(), 0))
         {
-            bool fMp3 = rgb.size() > 3 && !(rgb[0] == 'R' && rgb[1] == 'I' && rgb[2] == 'F' && rgb[3] == 'F');
-            std::string strPath = _StrJoinPath(strDir, "sound-" + strKey + (fMp3 ? ".mp3" : ".wav"));
+            bool fWav = rgb.size() > 4 && memcmp(rgb.data(), "RIFF", 4) == 0;
+            std::string strPath = _StrJoinPath(strDir, strLeaf + (fWav ? ".wav" : ".mp3"));
             if (FWriteFileBytes(strPath, rgb, &strError))
+            {
                 sf.path = strPath;
+                if (fWav)
+                    sf.dtsLength = _DtsWav(rgb);
+            }
             else
+            {
                 sf.note = strError;
+            }
         }
         else
         {
             sf.note = "could not read sound data";
         }
     }
-    ReleasePpo(&pmsnd);
     (*pmapCache)[strKey] = sf;
     return sf;
 }
 
+// One sound as playback would start it: taken from the movie's sound queue
+// (MSQ) after the engine processed a frame, so it includes motion-matched
+// sounds and follows the engine's rules.
 struct Cue
 {
-    int32_t iscen;
     int32_t ifrm; // 0-based frame within the scene
-    int32_t sty;
+    std::string channel;
     std::string target; // "scene" or actor id
-    TAG tag;
-    int32_t vlm;
+    int32_t sty;
     bool fLoop;
+    bool fQueue;
+    int32_t vlm;
+    uint32_t dtsOffset; // start this far into the sound
+    SoundFile sf;
 };
 
 static const char *_PszSty(int32_t sty)
@@ -275,21 +316,100 @@ static const char *_PszTrans(TRANS trans)
     }
 }
 
-static void _CollectCues(std::vector<Cue> *pvecCues, int32_t iscen, int32_t ifrm, const std::string &strTarget,
-                         int32_t sty, PGL pgltag, int32_t vlm, bool fLoop)
+// Moves the movie's queued sounds into vecCues and empties the queue
+// without playing anything.
+static void _DrainQueue(PMSQ pmsq, int32_t ifrm, const std::string &strDir, std::map<std::string, SoundFile> *pmapCache,
+                        std::vector<Cue> *pvecCues)
 {
-    for (int32_t itag = 0; pgltag != pvNil && itag < pgltag->IvMac(); itag++)
+    for (int32_t isqe = 0; isqe < pmsq->Csqe(); isqe++)
     {
+        SQE sqe;
+        pmsq->GetSqe(isqe, &sqe);
         Cue cue;
-        cue.iscen = iscen;
         cue.ifrm = ifrm;
-        cue.sty = sty;
-        cue.target = strTarget;
-        pgltag->Get(itag, &cue.tag);
-        cue.vlm = vlm;
-        cue.fLoop = fLoop;
+        cue.sty = sqe.pmsnd->Sty();
+        cue.target = sqe.fActr ? std::to_string(sqe.objID) : std::string("scene");
+        // The engine's sound channel: one per (actor or scene, sound type)
+        cue.channel = cue.target + "/" + std::to_string(cue.sty);
+        cue.fLoop = sqe.fLoop;
+        cue.fQueue = sqe.fQueue;
+        cue.vlm = sqe.vlmMod;
+        cue.dtsOffset = sqe.dtsStart;
+        cue.sf = _SoundFileFor(sqe.pmsnd, strDir, pmapCache);
         pvecCues->push_back(cue);
     }
+    pmsq->FlushMsq();
+}
+
+// Turns one scene's cues into timed clips (milliseconds from the scene's
+// start): a new sound on a channel cuts off the one playing unless it was
+// queued, in which case it starts when the current one ends.
+static void _ScheduleScene(int32_t iscen, int32_t cfrm, const std::vector<Cue> &vecCues, Json *pjsonClips,
+                           Json *pjsonNotes)
+{
+    const int32_t dtsScene = cfrm * 1000 / kfps;
+    struct Active
+    {
+        int32_t iclip;
+        int32_t tsEnd; // -1 = until replaced
+    };
+    std::map<std::string, Active> mapActive;
+    std::vector<Json> vecClips;
+
+    for (const Cue &cue : vecCues)
+    {
+        if (cue.sf.path.empty())
+        {
+            std::string strNote = cue.sf.name + ": " + cue.sf.note;
+            bool fSeen = fFalse;
+            for (const Json &json : pjsonNotes->AsArray())
+                fSeen |= json.AsString() == strNote;
+            if (!cue.sf.note.empty() && cue.sf.note.find("silent") == std::string::npos && !fSeen)
+                pjsonNotes->Push(strNote);
+        }
+        int32_t tsStart = cue.ifrm * 1000 / kfps;
+        auto it = mapActive.find(cue.channel);
+        if (it != mapActive.end())
+        {
+            Active &active = it->second;
+            bool fStillPlaying = active.tsEnd < 0 || active.tsEnd > tsStart;
+            if (cue.fQueue && fStillPlaying && active.tsEnd >= 0)
+            {
+                tsStart = active.tsEnd; // waits its turn
+            }
+            else if (fStillPlaying && active.iclip >= 0)
+            {
+                vecClips[active.iclip].Set("end_ms", tsStart);
+            }
+        }
+        if (cue.sf.path.empty())
+        {
+            // A silent sound still stops the channel
+            mapActive[cue.channel] = {-1, tsStart};
+            continue;
+        }
+        if (tsStart >= dtsScene)
+            continue;
+        int32_t tsEnd = -1;
+        if (!cue.fLoop && cue.sf.dtsLength >= 0)
+            tsEnd = tsStart + LwMax(0, cue.sf.dtsLength - static_cast<int32_t>(cue.dtsOffset));
+
+        Json json = Json::MakeObject();
+        json.Set("scene", iscen);
+        json.Set("start_ms", tsStart);
+        json.Set("end_ms", tsEnd < 0 || tsEnd > dtsScene ? dtsScene : tsEnd);
+        json.Set("offset_ms", static_cast<int32_t>(cue.dtsOffset));
+        json.Set("file", cue.sf.path);
+        json.Set("name", cue.sf.name);
+        json.Set("type", _PszSty(cue.sty));
+        json.Set("target", cue.target);
+        json.Set("loop", cue.fLoop);
+        json.Set("volume", cue.vlm > 0 ? static_cast<double>(cue.vlm) / kvlmFull : 1.0);
+        mapActive[cue.channel] = {static_cast<int32_t>(vecClips.size()), tsEnd};
+        vecClips.push_back(json);
+    }
+    for (Json &json : vecClips)
+        pjsonClips->Push(json);
 }
 
 static bool _FCmdExportMedia(Request &req)
@@ -322,7 +442,15 @@ static bool _FCmdExportMedia(Request &req)
     int32_t cfrmTotal = 0;
     int32_t dxp = 0, dyp = 0;
     Json jsonScenes = Json::MakeArray();
-    std::vector<Cue> vecCues;
+    Json jsonClips = Json::MakeArray();
+    Json jsonNotes = Json::MakeArray();
+    std::map<std::string, SoundFile> mapCache;
+    PMSQ pmsq = pmvie->Pmsq();
+
+    // Queue sounds without playing them: enqueueing is skipped while the
+    // queue is "off", and anything left over is dropped
+    pmsq->SndOnShort();
+    pmsq->FlushMsq();
 
     for (int32_t iscen = iscenFirst; iscen <= iscenLast && !req.Failed(); iscen++)
     {
@@ -342,43 +470,43 @@ static bool _FCmdExportMedia(Request &req)
         char rgch[40];
         snprintf(rgch, sizeof(rgch), "s%02d_%%05d.png", iscen);
         std::string strPattern = _StrJoinPath(strDir, rgch);
+        std::vector<Cue> vecCues;
+
+        // Start at the first frame and replay its sounds (moving forward to
+        // a frame queues that frame's sounds; the first frame needs a replay)
+        pmsq->FlushMsq();
+        if (!pscen->FGotoFrm(nfrmFirst))
+        {
+            FFailEngine(req, "could not go to the first frame");
+            break;
+        }
+        pmsq->FlushMsq();
+        if (fAudio)
+        {
+            pscen->FReplayFrm(fscenSounds | fscenActrs);
+            _DrainQueue(pmsq, 0, strDir, &mapCache, &vecCues);
+        }
 
         for (int32_t nfrm = nfrmFirst; nfrm <= nfrmLast; nfrm++)
         {
             int32_t ifrm = nfrm - nfrmFirst;
-            if (!pscen->FGotoFrm(nfrm))
+            if (nfrm != nfrmFirst)
             {
-                FFailEngine(req, "could not go to frame " + std::to_string(nfrm));
-                break;
+                if (!pscen->FGotoFrm(nfrm))
+                {
+                    FFailEngine(req, "could not go to frame " + std::to_string(nfrm));
+                    break;
+                }
+                if (fAudio)
+                    _DrainQueue(pmsq, ifrm, strDir, &mapCache, &vecCues);
+                else
+                    pmsq->FlushMsq();
             }
             snprintf(rgch, sizeof(rgch), "s%02d_%05d.png", iscen, ifrm);
             if (!FRenderToPng(req, _StrJoinPath(strDir, rgch), &dxp, &dyp, fFalse))
                 break;
-            if (!fAudio)
-                continue;
-
-            for (int32_t sty = stySfx; sty < styLim; sty++)
-            {
-                PGL pgltag = pvNil;
-                int32_t vlm;
-                bool fLoop;
-                if (pscen->FQuerySnd(sty, &pgltag, &vlm, &fLoop))
-                    _CollectCues(&vecCues, iscen, ifrm, "scene", sty, pgltag, vlm, fLoop);
-                ReleasePpo(&pgltag);
-
-                PGL pglpactr = pscen->PglRollCall();
-                for (int32_t ipactr = 0; pglpactr != pvNil && ipactr < pglpactr->IvMac(); ipactr++)
-                {
-                    PACTR pactr;
-                    pglpactr->Get(ipactr, &pactr);
-                    if (!pactr->FSoundInFrm())
-                        continue;
-                    if (pactr->FQuerySnd(sty, fFalse, &pgltag, &vlm, &fLoop))
-                        _CollectCues(&vecCues, iscen, ifrm, std::to_string(pactr->Arid()), sty, pgltag, vlm, fLoop);
-                    ReleasePpo(&pgltag);
-                }
-            }
         }
+        _ScheduleScene(iscen, nfrmLast - nfrmFirst + 1, vecCues, &jsonClips, &jsonNotes);
 
         Json jsonScene = Json::MakeObject();
         jsonScene.Set("index", iscen);
@@ -388,52 +516,13 @@ static bool _FCmdExportMedia(Request &req)
         jsonScenes.Push(jsonScene);
         cfrmTotal += nfrmLast - nfrmFirst + 1;
     }
-
-    // Write each distinct sound once and describe the cues. A cue lasts
-    // until the next cue on the same target and sound type (3D Movie Maker
-    // replaces a target's sound of a type with the next one) or the end of
-    // its scene.
-    Json jsonCues = Json::MakeArray();
-    Json jsonNotes = Json::MakeArray();
-    std::map<std::string, SoundFile> mapCache;
-    for (size_t icue = 0; icue < vecCues.size() && !req.Failed(); icue++)
-    {
-        const Cue &cue = vecCues[icue];
-        int32_t ifrmUntil = -1;
-        for (size_t jcue = icue + 1; jcue < vecCues.size(); jcue++)
-        {
-            const Cue &next = vecCues[jcue];
-            if (next.iscen == cue.iscen && next.target == cue.target && next.sty == cue.sty && next.ifrm > cue.ifrm)
-            {
-                ifrmUntil = next.ifrm;
-                break;
-            }
-        }
-        SoundFile sf = _SoundFileFor(pmvie, cue.tag, strDir, &mapCache);
-        if (sf.path.empty())
-        {
-            if (!sf.note.empty() && sf.note.find("silent") == std::string::npos)
-                jsonNotes.Push(sf.name + ": " + sf.note);
-            continue;
-        }
-        Json json = Json::MakeObject();
-        json.Set("scene", cue.iscen);
-        json.Set("frame", cue.ifrm); // 0-based within the scene
-        if (ifrmUntil >= 0)
-            json.Set("until_frame", ifrmUntil);
-        json.Set("file", sf.path);
-        json.Set("name", sf.name);
-        json.Set("type", _PszSty(cue.sty));
-        json.Set("target", cue.target);
-        json.Set("loop", cue.fLoop);
-        json.Set("volume", cue.vlm > 0 ? static_cast<double>(cue.vlm) / kvlmFull : 1.0);
-        jsonCues.Push(json);
-    }
+    pmsq->FlushMsq();
 
     if (iscenRestore != ivNil && iscenRestore != pmvie->Iscen())
         pmvie->FSwitchScen(iscenRestore);
     if (nfrmRestore != ivNil && pmvie->Pscen() != pvNil)
         pmvie->Pscen()->FGotoFrm(nfrmRestore);
+    pmsq->FlushMsq();
     RefreshViews(pmvie);
     if (req.Failed())
         return fFalse;
@@ -443,7 +532,7 @@ static bool _FCmdExportMedia(Request &req)
     req.result.Set("height", dyp);
     req.result.Set("total_frames", cfrmTotal);
     req.result.Set("scenes", jsonScenes);
-    req.result.Set("cues", jsonCues);
+    req.result.Set("clips", jsonClips);
     if (jsonNotes.Size() > 0)
         req.result.Set("notes", jsonNotes);
     return fTrue;

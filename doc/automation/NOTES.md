@@ -439,6 +439,19 @@ on the way:
   frame, trimmed where the next sound on the same target and type takes
   over (3DMM replaces rather than layers), looped with `-stream_loop`, mixed
   and loudness-normalised (`loudnorm` to −16 LUFS).
+* **Exact soundtrack (revised).** The first version queried sound events
+  (`SCEN::FQuerySnd`, `ACTR::FQuerySnd`) and guessed replacement rules, and
+  missed motion-matched sounds. It now reads what the engine itself queues
+  for playback: after each frame step the movie's `MSQ` holds that frame's
+  sounds (scene events, actor events and motion-matched cels), already
+  resolved by the engine's channel rules; `MSQ` gained read accessors
+  (`Csqe`/`GetSqe`) and the bridge drains the queue without playing it. The
+  first frame is replayed with `SCEN::FReplayFrm(fscenSounds | fscenActrs)`.
+  The bridge then schedules clips in milliseconds per channel (actor or
+  scene × sound type): a new sound cuts the current one unless queued, in
+  which case it starts when the current one ends (WAV lengths from the
+  header, MIDI from the rendered file). Verified with motion-matched
+  footsteps on a walk cycle: one step every 7 frames.
 * **Scene editing** reuses the scene sorter's composite movie (`CMVI`):
   `FAddToCmvi` lists this movie's scenes and appends another movie's as
   imports; entries can be reordered (`GL::Move` inserts *before* its target

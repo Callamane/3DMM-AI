@@ -277,7 +277,7 @@ async fn builds_saves_and_reopens_a_two_scene_movie() -> Result<()> {
         manifest["scenes"].as_array().unwrap().len() == 3,
         "{manifest}"
     );
-    let cue_files: Vec<&str> = manifest["cues"]
+    let cue_files: Vec<&str> = manifest["clips"]
         .as_array()
         .unwrap()
         .iter()

@@ -187,9 +187,9 @@ second, numbered per scene from 1.
 * Recording an action or path for an actor replaces what that actor did after that frame, as in the Studio.
   Actions end in the rest pose (or frozen); an action can't be left looping past the end of a recording.
 * Rendered frames are 8-bit, 544×306, like the Studio's view.
-* `export_video` reconstructs sound timing from the movie's sound events: a sound plays until the next sound of the
-  same type on the same actor/scene or the end of its scene. Motion-matched sounds (e.g. footsteps tied to an
-  action's cels) and "queued" sounds are not reproduced exactly.
+* `export_video` takes its soundtrack from the engine's own sound queue as it steps through each frame, so it follows
+  playback's rules (a new sound replaces the one on the same actor/scene and type unless queued; motion-matched
+  sounds such as footsteps repeat with the action). Sounds stop at the end of their scene.
 * Debug builds show assertion dialogs that block automation until dismissed; use a release build unattended.
 * Only one copy of 3DMMEx can run at a time.
 
