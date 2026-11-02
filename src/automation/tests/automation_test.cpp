@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "directing.h"
 #include "image8.h"
 #include "json.h"
 #include "physics.h"
@@ -478,4 +479,52 @@ TEST(AutomationPhysics, WalkThreadsThroughACrowd)
     for (const Obstacle &obs : obstacles)
         EXPECT_GE(DistClosest(Vec3(-3, 0, 0), steps, obs.x, obs.z), obs.radius + 0.25) << obs.x;
     EXPECT_EQ(steps.back().itarget, 0);
+}
+
+TEST(AutomationDirecting, CutsOnlyWhenItPaysOff)
+{
+    // Two cameras; camera 1 is slightly better on beat 1 only: not worth a cut
+    std::vector<std::vector<double>> score{{2, 1}, {1.9, 2.0}, {2, 1}};
+    auto cams = VecChooseShots(score, 0.5);
+    EXPECT_EQ(cams, (std::vector<int32_t>{0, 0, 0}));
+    // Much better: cut to it and back
+    score[1] = {0, 3};
+    cams = VecChooseShots(score, 0.5);
+    EXPECT_EQ(cams, (std::vector<int32_t>{0, 1, 0}));
+}
+
+TEST(AutomationDirecting, ShotReverseShot)
+{
+    // A speaks, B speaks, A speaks: each is best on their own camera
+    std::vector<std::vector<double>> score{{3, 0.5}, {0.5, 3}, {3, 0.5}, {0.5, 3}};
+    EXPECT_EQ(VecChooseShots(score, 0.6), (std::vector<int32_t>{0, 1, 0, 1}));
+    EXPECT_TRUE(VecChooseShots({}, 0.6).empty());
+}
+
+TEST(AutomationDirecting, ShortShotsMergeIntoNeighbours)
+{
+    // Beats at 1, 20, 23, 40; the 3-frame shot on camera 2 is too short
+    std::vector<int32_t> cams{0, 2, 1, 1};
+    HoldShortShots({1, 20, 23, 40}, 60, 9, &cams);
+    EXPECT_EQ(cams, (std::vector<int32_t>{0, 0, 1, 1}));
+    // A short first shot takes the next shot's camera
+    cams = {3, 0, 0};
+    HoldShortShots({1, 4, 30}, 50, 9, &cams);
+    EXPECT_EQ(cams, (std::vector<int32_t>{0, 0, 0}));
+    // Long enough shots stay as they are
+    cams = {0, 1, 0};
+    HoldShortShots({1, 20, 40}, 60, 9, &cams);
+    EXPECT_EQ(cams, (std::vector<int32_t>{0, 1, 0}));
+}
+
+TEST(AutomationDirecting, FramingPrefersHalfTheFrame)
+{
+    EXPECT_NEAR(DFramingScore(0.5), 1, 1e-9);
+    EXPECT_LT(DFramingScore(0.1), DFramingScore(0.4));
+    EXPECT_LT(DFramingScore(1.0), DFramingScore(0.6));
+    EXPECT_GE(DFramingScore(1.2), 0);
+    EXPECT_EQ(DFramingScore(0), 0);
+    // A close single aims taller: legs cropped below the frame are fine
+    EXPECT_NEAR(DFramingScore(0.8, 0.8), 1, 1e-9);
+    EXPECT_GT(DFramingScore(0.75, 0.8), DFramingScore(0.45, 0.8));
 }

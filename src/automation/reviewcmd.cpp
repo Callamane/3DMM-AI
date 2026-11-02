@@ -84,6 +84,18 @@ static bool _FSpeaking(const ActorTrack &track, const FrameRange &range)
     return false;
 }
 
+// Whether another actor speaks during range: then this one being out of
+// frame is ordinary cutting to the speaker, not a mistake
+static bool _FOtherSpeaking(const std::vector<ActorTrack> &vecTracks, const ActorTrack &track, const FrameRange &range)
+{
+    for (const ActorTrack &other : vecTracks)
+    {
+        if (&other != &track && _FSpeaking(other, range))
+            return true;
+    }
+    return false;
+}
+
 static bool _FMoving(const ActorTrack &track, const FrameRange &range)
 {
     auto it = track.setMoving.lower_bound(range.from - kcfrmSampleStep);
@@ -326,9 +338,11 @@ static bool _FReviewScene(Request &req, PMVIE pmvie, int32_t iscen, std::vector<
         for (const FrameRange &range : VecRanges(track.vecOut, kcfrmSampleStep))
         {
             bool fSpeaking = _FSpeaking(track, range), fMoving = _FMoving(track, range);
-            add(fSpeaking || !fMoving ? "warning" : "info", "out_of_shot", range, track.strName,
+            bool fListening = !fSpeaking && _FOtherSpeaking(vecTracks, track, range);
+            add(fSpeaking || (!fMoving && !fListening) ? "warning" : "info", "out_of_shot", range, track.strName,
                 track.strName + " is out of shot" +
-                    (fSpeaking ? " while speaking" : (fMoving ? " (walking in or out)" : "")),
+                    (fSpeaking ? " while speaking"
+                               : (fMoving ? " (walking in or out)" : (fListening ? " while someone else speaks" : ""))),
                 kstrFixShot);
         }
         for (const FrameRange &range : VecRanges(track.vecCutOff, kcfrmSampleStep))
@@ -342,9 +356,11 @@ static bool _FReviewScene(Request &req, PMVIE pmvie, int32_t iscen, std::vector<
         }
         for (const FrameRange &range : VecRanges(track.vecHidden, kcfrmSampleStep))
         {
-            add("warning", "hidden", range, track.strName,
+            bool fSpeaking = _FSpeaking(track, range);
+            bool fListening = !fSpeaking && _FOtherSpeaking(vecTracks, track, range);
+            add(fListening ? "info" : "warning", "hidden", range, track.strName,
                 track.strName + " is mostly hidden behind " + track.mapHiddenBy.at(range.from) +
-                    (_FSpeaking(track, range) ? " while speaking" : ""),
+                    (fSpeaking ? " while speaking" : (fListening ? " while someone else speaks" : "")),
                 "move them (arrange_actors does a group), spread the actors out sideways (x) or pick a camera "
                 "from another side");
         }

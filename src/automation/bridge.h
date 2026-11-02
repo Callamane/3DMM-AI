@@ -95,6 +95,7 @@ extern const CommandInfo krgcmdExport[];
 extern const CommandInfo krgcmdReview[];
 extern const CommandInfo krgcmdBlock[];
 extern const CommandInfo krgcmdPhysics[];
+extern const CommandInfo krgcmdDirect[];
 
 /***************************************************************************
     BRender number conversions. This build of BRender is fixed point

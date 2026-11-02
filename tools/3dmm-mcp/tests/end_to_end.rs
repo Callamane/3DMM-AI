@@ -269,6 +269,20 @@ async fn builds_saves_and_reopens_a_two_scene_movie() -> Result<()> {
     )
     .await?;
 
+    // ---- Editing: auto_camera cuts scene 0 and leaves a valid shot list
+    let edited = s.call("auto_camera", json!({"scene": 0})).await?;
+    let shots = edited["shots"].as_array().context("shots")?;
+    ensure!(!shots.is_empty(), "{edited}");
+    ensure!(
+        shots[0]["from"] == 1,
+        "the first shot starts the scene: {edited}"
+    );
+    let timeline = s.call("describe_timeline", json!({"scene": 0})).await?;
+    ensure!(
+        timeline["cameras"].as_array().map(Vec::len) == Some(shots.len()),
+        "the scene's cuts match the shot list: {timeline} vs {edited}"
+    );
+
     // ---- Review: every scene checked, issues carry frames and a fix
     let review = s.call("review_movie", json!({})).await?;
     ensure!(review["summary"]["scenes"] == 3, "{review}");

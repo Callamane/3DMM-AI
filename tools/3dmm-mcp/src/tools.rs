@@ -854,6 +854,28 @@ pub fn all_tools() -> Vec<ToolSpec> {
             obj(json!({"scene": {"type": "integer", "minimum": 0, "description": "Default: the current scene."}}), &[]),
         ),
         bridge(
+            "auto_camera",
+            "Edit a scene's camera cuts like a film editor. The scene is split at each line of dialogue (each \
+             time an actor starts a sound); every one of the set's camera angles is tried on every line and the \
+             cuts that best show the speaker (in shot, not hidden, facing us, a good size, near the middle) win, \
+             with a cost per cut so it only cuts when the new angle is clearly better and never leaves a shot \
+             under min_shot_seconds. style coverage (default) opens wide then goes to singles of whoever speaks \
+             (shot / reverse shot); wide keeps everyone in frame. Replaces the scene's existing cuts. Returns the \
+             shot list, with a warning on shots where no angle shows the speaker's face. apply=false previews.",
+            obj(
+                json!({
+                    "scene": {"type": "integer", "minimum": 0, "description": "Default: the current scene."},
+                    "style": {"type": "string", "enum": ["coverage", "wide"], "default": "coverage"},
+                    "min_shot_seconds": {"type": "number", "minimum": 0, "maximum": 30, "default": 2},
+                    "cut_penalty": {"type": "number", "minimum": 0, "maximum": 10, "description": "Higher means fewer cuts (style default: coverage 0.4, wide 1.2)."},
+                    "cameras": {"type": "array", "items": {"type": "integer"}, "description": "Only use these camera angles."},
+                    "apply": {"type": "boolean", "default": true},
+                    "verbose": {"type": "boolean", "default": false, "description": "Also return every line's score for every camera."}
+                }),
+                &[],
+            ),
+        ),
+        bridge(
             "review_movie",
             "Check the whole movie for problems a viewer would notice, without looking at every frame: actors \
              out of shot, cut off by the frame edge or hidden behind someone nearer the camera (flagged hardest \
@@ -943,7 +965,7 @@ pub fn all_tools() -> Vec<ToolSpec> {
             "play" => tool.timeout_secs = 15 * 60,
             "export_frames" | "export_video" => tool.timeout_secs = 20 * 60,
             "goto_studio" | "launch" | "preview_cameras" | "describe_timeline" | "storyboard"
-            | "suggest_camera" | "review_movie" => tool.timeout_secs = 120,
+            | "suggest_camera" | "review_movie" | "auto_camera" => tool.timeout_secs = 120,
             _ => {}
         }
     }
@@ -964,7 +986,7 @@ pub const WORKFLOW_GUIDE: &str = r#"# Making a movie with 3D Movie Maker
    - `animate(actor, action, seconds)` does an action on the spot (laugh, dance, think) and extends the scene.
    - `physics(actor, to: "Greg")` throws something (a Sphere prop makes a ball) that arcs, bounces off people and the floor and rolls to a stop; `motion: "drop"` drops it. Use the returned impact frames for a bump sound or a reaction. Walks step around people by themselves (`avoid_actors`).
    - Actors return to their rest pose afterwards (`then: "freeze"` to hold the last pose).
-7. **Camera and text** — `set_camera(camera, frame)` cuts within a scene. `add_text(text, kind: "caption", rect: "top"|"bottom"|"center", frame, until_frame, size, color)` for titles and subtitles.
+7. **Camera and text** — once the acting is done, `auto_camera` edits the scene's cuts for you (wide establishing shot, then the best angle on whoever is speaking); fix any shot it warns about and run it again. `set_camera(camera, frame)` cuts by hand. `add_text(text, kind: "caption", rect: "top"|"bottom"|"center", frame, until_frame, size, color)` for titles and subtitles.
 8. **Check** — `storyboard` shows a whole scene on one image; `suggest_camera` ranks angles for the actors in shot; `describe_timeline` summarises who does what when (cameras, actions, movement, text, sounds). `render_frame(frame)` shows a frame. `get_state(all_scenes: true)` gives every scene's length and the total. **`review_movie` checks everything at once** (actors out of shot, cut off or hidden while speaking, unreadable text, dead stretches) and says how to fix each problem; run it before saving and again after fixing.
 9. **More scenes** — `add_scene` again (actors belong to one scene; add them again); `set_transition("dissolve")` on the earlier scene.
 10. **Save and share** — `save_movie(path: ".../name.3mm")` keeps an editable movie; `export_video(path: ".../name.mp4")` makes a video with sound that plays anywhere. `play(from_start: true, wait: true)` shows it in the app.

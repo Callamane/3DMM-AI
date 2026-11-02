@@ -62,6 +62,7 @@ const BRIDGE_COMMANDS: &[&str] = &[
     "export_media",
     "storyboard",
     "review_movie",
+    "auto_camera",
     "suggest_camera",
     "move_scene",
     "duplicate_scene",

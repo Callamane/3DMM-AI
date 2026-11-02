@@ -538,6 +538,29 @@ on the way:
   smoother video without touching the movie, `export_video(smooth: true)`
   motion-interpolates in-betweens with ffmpeg's minterpolate (6 -> 24 fps
   before scaling); fast limbs can smear a little, so it is opt-in.
+* `auto_camera` (directcmd.cpp; choice rules in directing.cpp, unit
+  tested). Beats start at each actor sound (`FSoundInFrm`), plus an
+  establishing beat before the first. Every camera is tried on every beat
+  (`BKGD::FSetCamera`, no scene events) at frames near the beat's start,
+  middle and end, scoring the worst: the speaker must be in shot, not cut
+  off and at least half visible (`FVisibleFraction`), then gains for
+  framing (ideal height per style), centring, facing the camera (3/4 view
+  best, back turned penalised in coverage) and listeners in frame;
+  establishing beats want everyone visible. `VecChooseShots` is a Viterbi
+  pass with a cost per cut; `HoldShortShots` merges shots under
+  min_shot_seconds. Cuts are applied by walking the scene and calling
+  `MVIE::FChangeCam` where the camera differs (changing back to the
+  previous camera deletes an old cut), so they are ordinary camera events.
+  On the diner movie coverage gives wide / Greg single / wide / Greg single
+  and plays the same in the stock build. review_movie now reports a
+  listener out of shot or hidden while someone else speaks as a note, not a
+  warning, since that is ordinary cutting.
+* `BWLD::SetIgnoreBackgroundDepth` rebuilds the whole working Z buffer when
+  switched: the per-render cleanup only touches regions actors were drawn
+  in, so with no other actor on screen the far fill never happened (an
+  actor fully behind a booth measured as fully visible), and switching back
+  must restore the set's depth everywhere or actors could later draw
+  through furniture.
 * `review_movie` (reviewcmd.cpp; rules in review.cpp, unit tested) steps
   every frame of each scene without rendering to track movement, action
   changes, sound starts, cuts and text visibility, then renders every third

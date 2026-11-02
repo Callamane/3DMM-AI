@@ -5,6 +5,7 @@
 
 # Engine-independent pieces, unit tested on their own
 add_library(automation-core STATIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/directing.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/image8.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/json.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/linesrv.cpp"
@@ -24,6 +25,7 @@ target_sources(studio
     "${CMAKE_CURRENT_SOURCE_DIR}/blockcmd.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/bridge.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/catalog.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/directcmd.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/engine.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/exportcmd.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/mediacmd.cpp"
