@@ -592,6 +592,17 @@ on the way:
   a hit with a reaction animates the target from the impact frame. The
   closing pause holds someone still on stage. review_movie notes, rather
   than warns about, an actor briefly hidden while walking and not speaking.
+* Sound in scripts: `music` (by name or mood word; "none" plays the
+  "sound stopper" to silence the set's own music), `sound` lines (an effect
+  on the scene or `on` a character; the next line doesn't wait) and
+  `hit_sound` on throws (attached to the target on the impact frame).
+  Names resolve through list_sounds' filter: an exact name, else the first
+  containing it, with a note saying which was used. `subtitles: true`
+  captions each spoken line at the bottom; the next line waits until the
+  caption has been up for its reading time (the review's rule), since quick
+  lines are said faster than read. A script with a throw blocks the group
+  2 m apart (1 m left no room, and the prop spawned against the target),
+  and the prop appears up to 0.6 m in front of the thrower.
 * auto_camera penalises a shot where another actor covers over 45% of the
   frame (someone pressed against the lens), and the framing score drops
   faster for subjects bigger than ideal than for ones a little small.

@@ -122,8 +122,11 @@ async fn script_scene_builds_a_reviewed_scene() -> Result<()> {
             json!({
                 "background": "diner",
                 "title": "TEST",
+                "subtitles": true,
+                "music": "funny moment",
                 "cast": [{"name": "Ann", "actor": "Bella"}, {"name": "Bob", "actor": "Gregory"}],
                 "lines": [
+                    {"sound": "bell service"},
                     {"who": "Ann", "says": "Is this seat taken?"},
                     {"who": "Bob", "does": "Laugh", "seconds": 1},
                     {"who": "Bob", "says": "Only by my sandwich."},
@@ -132,8 +135,20 @@ async fn script_scene_builds_a_reviewed_scene() -> Result<()> {
             }),
         )
         .await?;
-    let lines = scene["lines"].as_array().context("lines")?;
+    let lines: Vec<Value> = scene["lines"]
+        .as_array()
+        .context("lines")?
+        .iter()
+        .filter(|l| l.get("sound").is_none())
+        .cloned()
+        .collect();
     ensure!(lines.len() == 3, "{scene}");
+    // The title plus a subtitle for each of the two spoken lines
+    let timeline = c.tool("describe_timeline", json!({"scene": 0})).await?;
+    ensure!(
+        timeline["text_boxes"].as_array().map(Vec::len) == Some(3),
+        "{timeline}"
+    );
     // Lines follow one another without overlapping
     for pair in lines.windows(2) {
         ensure!(

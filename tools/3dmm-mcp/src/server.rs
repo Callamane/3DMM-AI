@@ -26,6 +26,14 @@ use crate::video;
 
 const GUIDE_URI: &str = "3dmm://guide/workflow";
 
+/// How far in front of a thrower (metres) a thrown prop appears: clear of
+/// their body, so it doesn't start out inside them, but no more than a
+/// third of the way to the target
+const THROW_RELEASE: f64 = 0.6;
+
+/// Metres between neighbours when the script has a throw in it
+const THROW_SPACING: f64 = 2.0;
+
 const INSTRUCTIONS: &str = "Tools for making movies in Microsoft 3D Movie Maker (1995) through its automation \
 bridge. Typical order: list_backgrounds/preview_cameras -> add_scene -> list_templates/list_actions -> add_actor -> \
 render_frame(overlay) to block -> move_actor/speak_line/animate per actor in time order -> add_text -> \
@@ -258,6 +266,39 @@ impl ThreeDmmServer {
             .max(frame + 1))
     }
 
+    /// A built-in sound by a plain name: an exact match, else the first that
+    /// contains it (noted, so the caller knows which was used)
+    async fn find_sound(
+        &self,
+        kind: &str,
+        query: &str,
+        notes: &mut Vec<String>,
+        timeout: Duration,
+    ) -> anyhow::Result<Value> {
+        let found = self
+            .bridge_call(
+                "list_sounds",
+                json!({"type": kind, "filter": query}),
+                timeout,
+            )
+            .await?;
+        let items = found["items"].as_array().cloned().unwrap_or_default();
+        let exact = items.iter().find(|i| {
+            i["name"]
+                .as_str()
+                .is_some_and(|n| n.eq_ignore_ascii_case(query))
+        });
+        match exact.or(items.first()) {
+            Some(item) => {
+                if exact.is_none() {
+                    notes.push(format!("used {kind} '{}' for '{query}'", item["name"].as_str().unwrap_or_default()));
+                }
+                Ok(item["id"].clone())
+            }
+            None => anyhow::bail!("no {kind} sound is called anything like '{query}' (list_sounds type {kind} shows them)"),
+        }
+    }
+
     /// Where everyone else on stage stands (stage x, z) at a frame
     async fn others_positions(
         &self,
@@ -344,6 +385,26 @@ impl ThreeDmmServer {
             .await
             .map_err(step("add_scene".into()))?;
         let scene_index = scene["scene_index"].clone();
+        if let Some(music) = &script.music {
+            // "none" plays the stopper, silencing the set's own music
+            let none = music.eq_ignore_ascii_case("none");
+            let query = if none {
+                "sound stopper"
+            } else {
+                music.as_str()
+            };
+            let id = self
+                .find_sound("music", query, &mut notes, timeout)
+                .await
+                .map_err(step("music".into()))?;
+            self.bridge_call(
+                "attach_sound",
+                json!({"sound": id, "target": "scene", "frame": 1, "loop": !none}),
+                timeout,
+            )
+            .await
+            .map_err(step("music".into()))?;
+        }
         for member in &script.cast {
             self.bridge_call(
                 "add_actor",
@@ -356,12 +417,17 @@ impl ThreeDmmServer {
                 member.name, member.actor
             )))?;
         }
+        // A throw needs room between people
+        let mut arrange = json!({"layout": script.layout, "frame": 1});
+        if script
+            .lines
+            .iter()
+            .any(|l| matches!(l, script::Line::Throw { .. }))
+        {
+            arrange["spacing"] = json!(THROW_SPACING);
+        }
         let arranged = self
-            .bridge_call(
-                "arrange_actors",
-                json!({"layout": script.layout, "frame": 1}),
-                timeout,
-            )
+            .bridge_call("arrange_actors", arrange, timeout)
             .await
             .map_err(step("arrange_actors".into()))?;
         if let Some(framing) = arranged["framing"].as_str() {
@@ -452,7 +518,19 @@ impl ThreeDmmServer {
                         .speak_line_value(a, timeout)
                         .await
                         .map_err(step(format!("lines[{i}] ({who} says)")))?;
-                    let end = r["end_frame"].as_i64().unwrap_or(frame + 6);
+                    let mut end = r["end_frame"].as_i64().unwrap_or(frame + 6);
+                    if script.subtitles {
+                        // Quick lines are said faster than they are read: the
+                        // next line waits until the caption has been up long enough
+                        end = end.max(frame + (script::title_seconds(text) * 6.0).ceil() as i64);
+                        self.bridge_call(
+                            "add_text",
+                            json!({"text": text, "kind": "caption", "rect": "bottom", "frame": frame, "until_frame": end}),
+                            timeout,
+                        )
+                        .await
+                        .map_err(step(format!("lines[{i}] (subtitle)")))?;
+                    }
                     played.push(
                         json!({"line": i, "who": who, "says": text, "from": frame, "to": end - 1}),
                     );
@@ -477,6 +555,21 @@ impl ThreeDmmServer {
                     let end = r["end_frame"].as_i64().unwrap_or(frame + 6);
                     played.push(json!({"line": i, "who": who, "does": r["action"], "from": frame, "to": end - 1}));
                     frame = end;
+                }
+                script::Line::Sound { sound, on } => {
+                    let id = self
+                        .find_sound("sfx", sound, &mut notes, timeout)
+                        .await
+                        .map_err(step(format!("lines[{i}] (sound)")))?;
+                    let target = on.clone().map(Value::from).unwrap_or(json!("scene"));
+                    self.bridge_call(
+                        "attach_sound",
+                        json!({"sound": id, "target": target, "frame": frame}),
+                        timeout,
+                    )
+                    .await
+                    .map_err(step(format!("lines[{i}] (sound {sound})")))?;
+                    played.push(json!({"line": i, "sound": sound, "on": target, "at": frame}));
                 }
                 script::Line::Wait { seconds } => {
                     frame += (seconds * 6.0).round().max(1.0) as i64;
@@ -583,17 +676,19 @@ impl ThreeDmmServer {
                     prop,
                     at,
                     reaction,
+                    hit_sound,
                 } => {
                     let me = self.stage_position(who, frame, timeout).await?;
                     let them = self.stage_position(at, frame, timeout).await?;
                     let (dx, dz) = (them.0 - me.0, them.1 - me.1);
                     let len = (dx * dx + dz * dz).sqrt().max(1e-6);
+                    let release = THROW_RELEASE.min(len / 3.0);
                     // From the thrower's hand, a little toward the target
                     let name = format!("{prop} {}", i + 1);
                     self.bridge_call(
                         "add_actor",
                         json!({"template": prop, "name": name, "frame": frame,
-                               "position": {"x": me.0 + dx / len * 0.45, "z": me.1 + dz / len * 0.45, "y": 1.0}}),
+                               "position": {"x": me.0 + dx / len * release, "z": me.1 + dz / len * release, "y": 1.0}}),
                         timeout,
                     )
                     .await
@@ -626,6 +721,19 @@ impl ThreeDmmServer {
                             .await
                             .map_err(step(format!("lines[{i}] ({at} reacts)")))?;
                         next = next.max(reacted["end_frame"].as_i64().unwrap_or(hit_frame + 9));
+                    }
+                    if let (Some(hit), Some(sound)) = (hit, hit_sound) {
+                        let id = self
+                            .find_sound("sfx", sound, &mut notes, timeout)
+                            .await
+                            .map_err(step(format!("lines[{i}] (hit sound)")))?;
+                        self.bridge_call(
+                            "attach_sound",
+                            json!({"sound": id, "target": at, "frame": hit["frame"]}),
+                            timeout,
+                        )
+                        .await
+                        .map_err(step(format!("lines[{i}] (hit sound)")))?;
                     }
                     if hit.is_none() {
                         notes.push(format!("lines[{i}]: the {prop} missed {at}"));

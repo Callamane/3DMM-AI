@@ -747,7 +747,8 @@ pub fn all_tools() -> Vec<ToolSpec> {
              {\"who\": \"Greg\", \"does\": \"Laugh\", \"seconds\": 2}, {\"wait\": 1}, \
              {\"who\": \"Rita\", \"enters\": \"left\"}, {\"who\": \"Greg\", \"walks_to\": \"Rita\"}, \
              {\"who\": \"Rita\", \"throws\": \"Sphere\", \"at\": \"Greg\", \"reaction\": \"Mad\"}, \
-             {\"who\": \"Frank\", \"exits\": \"right\"}. Walks step around people; throws use physics.",
+             {\"who\": \"Frank\", \"exits\": \"right\"}, {\"sound\": \"bell service\"}. Walks step around people; \
+             throws use physics. subtitles: true captions the dialogue; music picks the score.",
             obj(
                 json!({
                     "background": {"type": "string", "description": "Set name or a word from its description (\"diner\", \"haunted\")."},
@@ -781,13 +782,18 @@ pub fn all_tools() -> Vec<ToolSpec> {
                                 "walks_to": {"description": "A character (stops beside them and faces them) or a stage point {x, z}."},
                                 "throws": {"type": "string", "description": "A prop to throw (\"Sphere\" makes a ball), with 'at'."},
                                 "at": {"type": "string", "description": "With throws: who it's thrown at."},
-                                "reaction": {"type": ["string", "integer"], "description": "With throws: the target's action if hit."}
+                                "reaction": {"type": ["string", "integer"], "description": "With throws: the target's action if hit."},
+                                "hit_sound": {"type": "string", "description": "With throws: a sound effect on the hit (\"bump\")."},
+                                "sound": {"type": "string", "description": "A sound effect by name (list_sounds type sfx), e.g. \"bell service\"; the next line doesn't wait for it."},
+                                "on": {"type": "string", "description": "With sound: the character it comes from (default: the scene)."}
                             }
                         }
                     },
                     "layout": {"type": "string", "enum": ["conversation", "line"], "default": "conversation"},
                     "camera_style": {"type": "string", "enum": ["coverage", "wide", "none"], "default": "coverage"},
-                    "transition": {"type": "string", "description": "Transition after this scene (cut, dissolve, fade_to_black...)."}
+                    "transition": {"type": "string", "description": "Transition after this scene (cut, dissolve, fade_to_black...)."},
+                    "subtitles": {"type": "boolean", "default": false, "description": "Caption each spoken line at the bottom while it is said."},
+                    "music": {"type": "string", "description": "Scene music by name or mood word (list_sounds type music: \"funny moment\", \"tense\", \"sudden danger\"...), or \"none\" to silence the set's own."}
                 }),
                 &["background", "cast", "lines"],
             ),

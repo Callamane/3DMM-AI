@@ -40,7 +40,12 @@ pub enum Line {
         prop: String,
         at: String,
         reaction: Option<Value>,
+        /// Sound effect played on the target when it hits
+        hit_sound: Option<String>,
     },
+    /// A sound effect starts, on a character or on the scene; the next line
+    /// doesn't wait for it
+    Sound { sound: String, on: Option<String> },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -65,6 +70,7 @@ impl Line {
             | Line::Exit { who, .. }
             | Line::WalkTo { who, .. }
             | Line::Throw { who, .. } => Some(who),
+            Line::Sound { on, .. } => on.as_deref(),
             Line::Wait { .. } => None,
         }
     }
@@ -78,6 +84,10 @@ pub struct Script {
     pub layout: String,
     pub camera_style: String,
     pub transition: Option<String>,
+    /// Caption every spoken line at the bottom while it is said
+    pub subtitles: bool,
+    /// Scene music by name ("none" silences the set's own music)
+    pub music: Option<String>,
     pub cast: Vec<CastMember>,
     pub lines: Vec<Line>,
 }
@@ -168,14 +178,30 @@ pub fn parse(args: &Value) -> Result<Script, String> {
         if kinds != 1 {
             return Err(format!(
                 "{at}: give exactly one of 'says' (dialogue), 'does' (an action), 'wait' (seconds), \
-                 'enters' / 'exits' (\"left\" or \"right\"), 'walks_to' (a character or {{x, z}}) or 'throws' \
-                 (a prop, with 'at')"
+                 'enters' / 'exits' (\"left\" or \"right\"), 'walks_to' (a character or {{x, z}}), 'throws' \
+                 (a prop, with 'at') or 'sound' (an effect)"
             ));
         }
         if line.get("wait").is_some() {
             lines.push(Line::Wait {
                 seconds: seconds(line, "wait", &at)?,
             });
+            continue;
+        }
+        if line.get("sound").is_some() {
+            let sound = string(line, "sound").ok_or(format!(
+                "{at}: 'sound' must name a sound effect (list_sounds type sfx), e.g. \"bump\""
+            ))?;
+            let on = match string(line, "on") {
+                Some(name) => Some(
+                    cast.iter()
+                        .find(|c| c.name.eq_ignore_ascii_case(&name))
+                        .map(|c| c.name.clone())
+                        .ok_or(format!("{at}: '{name}' is not in the cast ({})", names()))?,
+                ),
+                None => None,
+            };
+            lines.push(Line::Sound { sound, on });
             continue;
         }
         let who = string(line, "who").ok_or(format!("{at}: 'who' is required"))?;
@@ -241,6 +267,7 @@ pub fn parse(args: &Value) -> Result<Script, String> {
                 prop,
                 at: cast_name("at")?,
                 reaction: line.get("reaction").cloned(),
+                hit_sound: string(line, "hit_sound"),
             });
         } else if let Some(text) = string(line, "says") {
             lines.push(Line::Say {
@@ -268,7 +295,10 @@ pub fn parse(args: &Value) -> Result<Script, String> {
             });
         }
     }
-    if !lines.iter().any(|l| !matches!(l, Line::Wait { .. })) {
+    if !lines
+        .iter()
+        .any(|l| !matches!(l, Line::Wait { .. } | Line::Sound { .. }))
+    {
         return Err("'lines' needs at least one line that someone says or does".into());
     }
     check_staging(&cast, &lines)?;
@@ -280,13 +310,18 @@ pub fn parse(args: &Value) -> Result<Script, String> {
         layout,
         camera_style,
         transition: string(args, "transition"),
+        subtitles: args
+            .get("subtitles")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        music: string(args, "music"),
         cast,
         lines,
     })
 }
 
-const LINE_KINDS: [&str; 7] = [
-    "says", "does", "wait", "enters", "exits", "walks_to", "throws",
+const LINE_KINDS: [&str; 8] = [
+    "says", "does", "wait", "enters", "exits", "walks_to", "throws", "sound",
 ];
 
 /// Characters whose first line is an entrance start off stage
@@ -451,8 +486,8 @@ pub fn assign_voices(cast: &mut [CastMember], installed: &[(String, String)]) {
     }
 }
 
-/// How long a title stays up: long enough to read (a second plus three
-/// words a second), at least two seconds
+/// How long a title or subtitle stays up: long enough to read (a second
+/// plus three words a second), at least two seconds
 pub fn title_seconds(text: &str) -> f64 {
     (1.0 + text.split_whitespace().count() as f64 / 3.0).max(2.0)
 }
@@ -600,6 +635,37 @@ mod tests {
         assert!(err.contains("\"left\" or \"right\""), "{err}");
         // Exit and come back is fine
         assert!(staged(json!([{"who": "Bob", "exits": "left"}, {"who": "Bob", "enters": "right"}, {"who": "Bob", "says": "Back!"}])).is_ok());
+    }
+
+    #[test]
+    fn parses_sound_and_subtitles() {
+        let script = parse(&json!({
+            "background": "diner",
+            "subtitles": true,
+            "music": "funny moment",
+            "cast": [{"name": "Ann", "actor": "Bella"}, {"name": "Bob", "actor": "Gregory"}],
+            "lines": [
+                {"sound": "bell service"},
+                {"who": "Ann", "says": "Order up!"},
+                {"sound": "chair creak", "on": "bob"},
+                {"who": "Ann", "throws": "Sphere", "at": "Bob", "hit_sound": "bump"}
+            ]
+        }))
+        .unwrap();
+        assert!(script.subtitles);
+        assert_eq!(script.music.as_deref(), Some("funny moment"));
+        assert!(matches!(&script.lines[0], Line::Sound { on: None, .. }));
+        assert!(matches!(&script.lines[2], Line::Sound { on: Some(n), .. } if n == "Bob"));
+        assert!(matches!(&script.lines[3], Line::Throw { hit_sound: Some(s), .. } if s == "bump"));
+        // Sounds alone aren't a scene
+        let err = parse(&json!({"background": "diner", "cast": [{"name": "A", "actor": "Frank"}], "lines": [{"sound": "bump"}]}))
+            .unwrap_err();
+        assert!(err.contains("at least one line"), "{err}");
+        // A sound on someone off stage is caught
+        let err = parse(&json!({"background": "diner", "cast": [{"name": "A", "actor": "Frank"}, {"name": "B", "actor": "Bella"}],
+                                "lines": [{"who": "A", "says": "hi"}, {"who": "B", "exits": "left"}, {"sound": "bump", "on": "B"}]}))
+            .unwrap_err();
+        assert!(err.contains("lines[2]"), "{err}");
     }
 
     #[test]
