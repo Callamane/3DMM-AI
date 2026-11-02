@@ -48,6 +48,51 @@ pub struct ThreeDmmServer {
     tools: Arc<Vec<ToolSpec>>,
     by_name: HashMap<&'static str, usize>,
     client: Arc<Mutex<Option<BridgeClient>>>,
+    recovery: Arc<std::sync::Mutex<Recovery>>,
+}
+
+/// What the client needs to hear if the app had to be started again: the
+/// movie in it is gone, but the last save or checkpoint file can be reopened
+#[derive(Default)]
+struct Recovery {
+    connection_lost: bool,
+    restarted: bool,
+    last_saved: Option<String>,
+    last_checkpoint: Option<String>,
+}
+
+impl Recovery {
+    /// Notes what a successful command says about where the movie lives
+    fn record(&mut self, cmd: &str, result: &Value) {
+        let path = |key: &str| result[key].as_str().map(String::from);
+        match cmd {
+            "save_movie" | "open_movie" => self.last_saved = path("path"),
+            "new_movie" => self.last_saved = None,
+            "checkpoint" => self.last_checkpoint = path("file").or(self.last_checkpoint.take()),
+            _ => {}
+        }
+    }
+
+    /// The notice to give once after a restart, if there was one
+    fn take_notice(&mut self) -> Option<String> {
+        if !std::mem::take(&mut self.restarted) {
+            return None;
+        }
+        let mut notice = String::from(
+            "NOTE: 3D Movie Maker had stopped and was started again, so the movie open in it now is a new, empty \
+             one and changes since the last save are gone.",
+        );
+        if let Some(saved) = &self.last_saved {
+            notice.push_str(&format!(" Last saved: {saved}."));
+        }
+        if let Some(checkpoint) = &self.last_checkpoint {
+            notice.push_str(&format!(" Latest checkpoint: {checkpoint}."));
+        }
+        if self.last_saved.is_some() || self.last_checkpoint.is_some() {
+            notice.push_str(" Reopen one with open_movie(path) to carry on.");
+        }
+        Some(notice)
+    }
 }
 
 impl ThreeDmmServer {
@@ -60,6 +105,7 @@ impl ThreeDmmServer {
             tools: Arc::new(tools),
             by_name,
             client: Arc::new(Mutex::new(None)),
+            recovery: Arc::new(std::sync::Mutex::new(Recovery::default())),
         }
     }
 
@@ -76,6 +122,11 @@ impl ThreeDmmServer {
                     let (client, exe) = launcher::launch(self.port).await?;
                     tracing::info!("launched {}", exe.display());
                     *guard = Some(client);
+                    // A fresh app after losing the old one: the movie is gone
+                    let mut recovery = self.recovery.lock().expect("recovery lock");
+                    if std::mem::take(&mut recovery.connection_lost) {
+                        recovery.restarted = true;
+                    }
                 }
                 Err(err) => {
                     return Err(err.context(
@@ -97,12 +148,19 @@ impl ThreeDmmServer {
         let mut guard = self.client.lock().await;
         let client = self.ensure_connected(&mut guard).await?;
         let result = client.call(cmd, args, timeout).await;
-        if let Err(err) = &result {
+        match &result {
+            Ok(value) => self
+                .recovery
+                .lock()
+                .expect("recovery lock")
+                .record(cmd, value),
             // Bridge errors are normal answers; anything else means the
             // connection is unusable, so reconnect next time
-            if err.downcast_ref::<BridgeError>().is_none() {
+            Err(err) if err.downcast_ref::<BridgeError>().is_none() => {
                 *guard = None;
+                self.recovery.lock().expect("recovery lock").connection_lost = true;
             }
+            Err(_) => {}
         }
         result
     }
@@ -1135,7 +1193,18 @@ fn describe_error(err: &anyhow::Error) -> String {
         Some(bridge) => format!("{} [{}]", bridge.message, bridge.code),
         None => {
             let text = format!("{err:#}");
-            if text.contains("did not answer") {
+            let lost = [
+                "closed the connection",
+                "Broken pipe",
+                "Connection reset",
+                "connection refused",
+            ];
+            if lost.iter().any(|l| text.contains(l)) {
+                format!(
+                    "{text}. 3D Movie Maker seems to have stopped; the next call starts it again with an empty \
+                     movie (reopen your last save or checkpoint with open_movie)"
+                )
+            } else if text.contains("did not answer") {
                 format!(
                     "{text}. 3DMMEx may be showing a dialog (debug builds show assertion dialogs); check its window"
                 )
@@ -1210,6 +1279,10 @@ impl ServerHandler for ThreeDmmServer {
                 Err(err) => CallToolResult::error(vec![ContentBlock::text(describe_error(&err))]),
             }
         };
+        let mut result = result;
+        if let Some(notice) = self.recovery.lock().expect("recovery lock").take_notice() {
+            result.content.insert(0, ContentBlock::text(notice));
+        }
         Ok(result.into())
     }
 
@@ -1282,5 +1355,33 @@ impl ServerHandler for ThreeDmmServer {
                 .with_description("Make a 3D Movie Maker movie")
                 .into(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restart_notice_names_what_can_be_reopened() {
+        let mut recovery = Recovery::default();
+        recovery.record("save_movie", &json!({"path": "/m/a.3mm"}));
+        recovery.record("checkpoint", &json!({"name": "x", "file": "/tmp/cp/x.3mm"}));
+        assert_eq!(recovery.take_notice(), None, "no restart, no notice");
+        recovery.restarted = true;
+        let notice = recovery.take_notice().unwrap();
+        assert!(
+            notice.contains("/m/a.3mm") && notice.contains("/tmp/cp/x.3mm"),
+            "{notice}"
+        );
+        assert_eq!(recovery.take_notice(), None, "said once");
+
+        recovery.record("new_movie", &json!({}));
+        recovery.restarted = true;
+        let notice = recovery.take_notice().unwrap();
+        assert!(
+            !notice.contains("/m/a.3mm"),
+            "a new movie forgets the old save: {notice}"
+        );
     }
 }

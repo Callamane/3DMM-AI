@@ -424,6 +424,8 @@ static bool _FCmdCheckpoint(Request &req)
     _vecCheckpoints.push_back({strName, strPath, strPathMovie, pmvie->Cscen()});
     req.result.Set("name", strName);
     req.result.Set("scene_count", pmvie->Cscen());
+    // The copy stays on disk, so it can be opened even if the app closes
+    req.result.Set("file", strPath);
     req.result.Set("note", "restore_checkpoint returns to this state; making a checkpoint clears undo");
     return fTrue;
 }

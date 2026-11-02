@@ -612,6 +612,13 @@ on the way:
   MP4. "Make me a 30-second movie of two guys arguing in a diner" became
   one call: two scenes, 31.5 s, subtitles, music, a throw and an exit,
   built and exported in 7.4 s with no review warnings.
+* App restarts: if the connection drops (the app crashed or was closed),
+  that call fails saying 3D Movie Maker seems to have stopped, and the next
+  call starts it again. The server remembers the last save_movie /
+  open_movie path and the last checkpoint file (checkpoint now returns it;
+  the copies stay on disk in the temp folder), and the first result after
+  a restart begins with a notice: the movie in the app is new and empty,
+  here is what to reopen. Tested by killing the app mid-session.
 * `script_scene(replace: i)` rebuilds scene i in place: the index is checked
   first, the new scene is built at the end (with a checkpoint), then the old
   scene is deleted and the new one moved into its position, and the review
