@@ -124,7 +124,8 @@ Then open Claude Code and ask for a movie, e.g. *"make me a 30-second movie of t
 to ~/Movies/diner.3mm"*. The MCP server starts 3DMMEx (windowed, straight into the Studio) on the first tool call.
 The server finds the app in `dist/` next to it, preferring release builds; set `THREEDMM_APP` to use another build
 (a `.app` bundle or executable). Other environment variables: `THREEDMM_PORT` (default 7341) and
-`THREEDMM_NO_AUTOLAUNCH=1` (require an already-running app).
+`THREEDMM_NO_AUTOLAUNCH=1` (require an already-running app). `export_video` needs ffmpeg (`brew install ffmpeg`, or set
+`THREEDMM_FFMPEG`).
 
 Windows: the bridge is written to be portable (Winsock on Windows, BSD sockets elsewhere; no macOS-only APIs) and
 `speak_line` uses Windows' built-in speech synthesizer, but so far it has only been built and tested on macOS.
@@ -158,10 +159,11 @@ actors by numeric id or name.
 |---|---|
 | Session | `launch`, `get_state` (`all_scenes` for total length), `goto_studio`, `new_movie`, `open_movie`, `save_movie`, `undo`, `redo`, `checkpoint`, `restore_checkpoint`, `list_checkpoints` |
 | Catalog | `list_backgrounds` (with cameras and descriptions), `list_cameras`, `list_templates` (actors described by look), `list_actions`, `list_costumes`, `list_materials`, `list_sounds`, `list_3d_word_styles` |
-| Scenes | `add_scene`, `set_background`, `select_scene`, `set_camera`, `set_transition`, `delete_scene`, `goto_frame`, `add_pause` |
+| Scenes | `add_scene`, `set_background`, `select_scene`, `set_camera`, `set_transition`, `delete_scene`, `move_scene`, `duplicate_scene`, `import_scenes` (from another .3mm), `trim_scene`, `goto_frame`, `add_pause` |
 | Actors | `add_actor`, `add_3d_word`, `select_actor`, `remove_actor`, `set_action`, `move_actor` (walk a path), `animate` (act on the spot for a duration), `place_actor`, `rotate_actor`, `scale_actor`, `set_costume`, `set_name`, `actor_lifetime` |
-| Text and sound | `add_text`, `import_sound`, `attach_sound`, `speak_line` (MCP only: text-to-speech dialogue, attached and acted) |
+| Text and sound | `add_text`, `edit_text`, `remove_text`, `import_sound`, `attach_sound`, `remove_sound`, `speak_line` (MCP only: text-to-speech dialogue, attached and acted) |
 | Observe and play | `describe_scene`, `describe_timeline` (who does what when), `render_frame` (returns the image; `overlay` draws the stage grid and actor labels), `preview_cameras` (every angle of a set on one image), `export_frames` (PNG sequence), `play`, `stop` |
+| Export | `export_video` (MCP: MP4 with transitions and all sound, music rendered from MIDI; needs ffmpeg), `export_media` (bridge: frames + audio cues), `export_frames` |
 | MCP only | `batch` (several calls in one) |
 
 The bridge also has `hello` and `quit`. The MCP server publishes a workflow guide as the resource
@@ -185,6 +187,9 @@ second, numbered per scene from 1.
 * Recording an action or path for an actor replaces what that actor did after that frame, as in the Studio.
   Actions end in the rest pose (or frozen); an action can't be left looping past the end of a recording.
 * Rendered frames are 8-bit, 544×306, like the Studio's view.
+* `export_video` reconstructs sound timing from the movie's sound events: a sound plays until the next sound of the
+  same type on the same actor/scene or the end of its scene. Motion-matched sounds (e.g. footsteps tied to an
+  action's cels) and "queued" sounds are not reproduced exactly.
 * Debug builds show assertion dialogs that block automation until dismissed; use a release build unattended.
 * Only one copy of 3DMMEx can run at a time.
 

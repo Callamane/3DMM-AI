@@ -422,6 +422,35 @@ on the way:
   speak_line for non-talking actors, checkpoint/restore, timeline); the
   saved movie plays in the stock build.
 
+### Third round: editing and video export
+
+* **Video export.** The bridge's `export_media` renders every frame of every
+  scene and, while stepping, records sound events: scene sounds via
+  `SCEN::FQuerySnd`, actor sounds via `ACTR::FSoundInFrm`/`FQuerySnd` (non
+  motion-match). Each distinct sound is written once: WAV/MP3 chunk data is
+  the original file bytes (imports are stored as 8-bit 11 kHz WAV); MIDI
+  (`MIDS`, a millisecond-timed event stream) is rendered offline with the
+  FluidSynth API and the bundled `soundfont.sf3`, by stepping `MSTP` events
+  and calling `fluid_synth_write_s16` between them. `MSND` gained
+  `FFindSndData` (its data chunk ids were private). The MCP server's
+  `export_video` builds one ffmpeg graph: per-scene image sequences, `xfade`
+  for 3DMM transitions (dissolve → dissolve, fade to black/white →
+  fadeblack/fadewhite, black → short fadeblack), each sound `adelay`ed to its
+  frame, trimmed where the next sound on the same target and type takes
+  over (3DMM replaces rather than layers), looped with `-stream_loop`, mixed
+  and loudness-normalised (`loudnorm` to −16 LUFS).
+* **Scene editing** reuses the scene sorter's composite movie (`CMVI`):
+  `FAddToCmvi` lists this movie's scenes and appends another movie's as
+  imports; entries can be reordered (`GL::Move` inserts *before* its target
+  index, so forward moves pass `to + 1`) or dropped (`fNuked`), and
+  `FSetCmvi` rebuilds the movie. `duplicate_scene` imports from a "Save a
+  Copy" snapshot of the current movie. `trim_scene` uses `SCEN::FChop` and
+  `FChopBack`.
+* **Text and sound edits**: `edit_text` replaces a TBOX's runs with the
+  existing character properties (or applies new colour/size with
+  `FApplyChp`); `remove_text` is `SCEN::FRemTbox`; `remove_sound` is
+  `SCEN::FRemSnd` or `ACTR::FDeleteSndCore` wrapped in an actor undo.
+
 ## 13. Decisions
 
 * **Polling, not threads.** Non-blocking sockets serviced from

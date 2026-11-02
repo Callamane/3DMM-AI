@@ -165,6 +165,37 @@ static bool _FRectArg(Request &req, PMVU pmvu, bool fStory, RC *prc)
     return fTrue;
 }
 
+// Inserts UTF-8 text at cp. TXRD takes achar runs; convert through STN in
+// chunks since an STN holds at most kcchMaxStn characters.
+static bool _FInsertText(PTBOX ptbox, const std::string &strText, int32_t cp, PCHP pchp)
+{
+    size_t ich = 0;
+    while (ich < strText.size())
+    {
+        // Split on a UTF-8 boundary
+        size_t cch = strText.size() - ich;
+        if (cch > 200)
+        {
+            cch = 200;
+            while (cch > 0 && (static_cast<unsigned char>(strText[ich + cch]) & 0xC0) == 0x80)
+                cch--;
+        }
+        STN stn;
+        StnFromStr(strText.substr(ich, cch), &stn);
+        // 3DMM uses CR for paragraph breaks
+        for (int32_t ichStn = 0; ichStn < stn.Cch(); ichStn++)
+        {
+            if (stn.Psz()[ichStn] == ChLit('\n'))
+                stn.Psz()[ichStn] = kchReturn;
+        }
+        if (!ptbox->FReplaceRgch(stn.Psz(), stn.Cch(), cp, 0, pchp, pvNil, fdocUpdate))
+            return fFalse;
+        cp += stn.Cch();
+        ich += cch;
+    }
+    return fTrue;
+}
+
 static bool _FCmdAddText(Request &req)
 {
     PMVIE pmvie;
@@ -264,33 +295,7 @@ static bool _FCmdAddText(Request &req)
     }
     pscen->SelectTbox(ptbox);
 
-    // Insert the text. TXRD takes achar runs; convert through STN in chunks
-    // since an STN holds at most kcchMaxStn characters.
-    bool fOk = fTrue;
-    int32_t cp = 0;
-    size_t ich = 0;
-    while (fOk && ich < strText.size())
-    {
-        // Split on a UTF-8 boundary
-        size_t cch = strText.size() - ich;
-        if (cch > 200)
-        {
-            cch = 200;
-            while (cch > 0 && (static_cast<unsigned char>(strText[ich + cch]) & 0xC0) == 0x80)
-                cch--;
-        }
-        STN stn;
-        StnFromStr(strText.substr(ich, cch), &stn);
-        // 3DMM uses CR for paragraph breaks
-        for (int32_t ichStn = 0; ichStn < stn.Cch(); ichStn++)
-        {
-            if (stn.Psz()[ichStn] == ChLit('\n'))
-                stn.Psz()[ichStn] = kchReturn;
-        }
-        fOk = ptbox->FReplaceRgch(stn.Psz(), stn.Cch(), cp, 0, &chp, pvNil, fdocUpdate);
-        cp += stn.Cch();
-        ich += cch;
-    }
+    bool fOk = _FInsertText(ptbox, strText, 0, &chp);
     if (fOk && acrBox != kacrClear)
         fOk = ptbox->FSetAcrBack(acrBox);
     if (!fOk)
@@ -338,6 +343,87 @@ static bool _FCmdAddText(Request &req)
     req.result.Set("rect", jsonRc);
     req.result.Set("first_frame", nfrmStart);
     req.result.Set("until_frame", nfrmUntil == ivNil ? Json("end of scene") : Json(nfrmUntil));
+    return fTrue;
+}
+
+static bool _FTboxArg(Request &req, PSCEN pscen, PTBOX *pptbox)
+{
+    int32_t itbox;
+    if (!req.FArgInt("index", &itbox))
+        return fFalse;
+    *pptbox = itbox >= 0 && itbox < pscen->Ctbox() ? pscen->PtboxFromItbox(itbox) : pvNil;
+    if (*pptbox == pvNil)
+    {
+        return req.Fail(kszErrNotFound, "no text box " + std::to_string(itbox) + "; this scene has " +
+                                            std::to_string(pscen->Ctbox()) +
+                                            " (indexes from describe_scene or describe_timeline)");
+    }
+    return fTrue;
+}
+
+static bool _FCmdEditText(Request &req)
+{
+    PMVIE pmvie;
+    PSCEN pscen;
+    PTBOX ptbox;
+    std::string strText;
+
+    if (!FRequireScene(req, &pmvie, &pscen) || !FRequireNotPlaying(req, pmvie) || !_FTboxArg(req, pscen, &ptbox))
+        return fFalse;
+    if (!req.FArgString("text", &strText, fFalse))
+        return fFalse;
+
+    // Keep the existing look unless told otherwise
+    CHP chp;
+    ptbox->FetchChp(0, &chp);
+    if (req.FHasArg("color") && !_FParseColor(req, req.args.Get("color"), &chp.acrFore))
+        return fFalse;
+    if (req.FHasArg("size"))
+    {
+        int32_t dypFont;
+        if (!req.FArgInt("size", &dypFont))
+            return fFalse;
+        if (dypFont < 6 || dypFont > 200)
+            return req.Fail(kszErrBadArgs, "'size' must be between 6 and 200 (pixels)");
+        chp.dypFont = dypFont;
+    }
+
+    bool fOk;
+    if (req.FHasArg("text"))
+    {
+        if (strText.empty())
+            return req.Fail(kszErrBadArgs, "'text' must not be empty (use remove_text to delete the box)");
+        int32_t cpMac = ptbox->CpMac();
+        fOk = ptbox->FReplaceRgch(pvNil, 0, 0, cpMac - 1, &chp, pvNil, fdocUpdate) &&
+              _FInsertText(ptbox, strText, 0, &chp);
+    }
+    else
+    {
+        fOk = ptbox->FApplyChp(0, ptbox->CpMac() - 1, &chp);
+    }
+    if (!fOk)
+        return FFailEngine(req, "could not change the text");
+    pmvie->SetDirty();
+    RefreshViews(pmvie);
+    req.result.Set("index", req.args.Get("index"));
+    req.result.Set("note", "undo can't revert text edits made this way");
+    return fTrue;
+}
+
+static bool _FCmdRemoveText(Request &req)
+{
+    PMVIE pmvie;
+    PSCEN pscen;
+    PTBOX ptbox;
+
+    if (!FRequireScene(req, &pmvie, &pscen) || !FRequireNotPlaying(req, pmvie) || !_FTboxArg(req, pscen, &ptbox))
+        return fFalse;
+    if (!pscen->FRemTbox(ptbox))
+        return FFailEngine(req, "could not remove the text box");
+    pmvie->SetDirty();
+    RefreshViews(pmvie);
+    req.result.Set("removed", req.args.Get("index"));
+    req.result.Set("text_box_count", pscen->Ctbox());
     return fTrue;
 }
 
@@ -494,10 +580,59 @@ static bool _FCmdAttachSound(Request &req)
     return fTrue;
 }
 
+static bool _FCmdRemoveSound(Request &req)
+{
+    PMVIE pmvie;
+    PSCEN pscen;
+    int32_t sty;
+    bool fMotionMatch = fFalse;
+
+    if (!FRequireScene(req, &pmvie, &pscen) || !FRequireNotPlaying(req, pmvie))
+        return fFalse;
+    if (!_FSoundTypeArg(req, &sty) || !req.FArgBool("motion_match", &fMotionMatch, fFalse) ||
+        !FApplyFrameArg(req, pscen))
+    {
+        return fFalse;
+    }
+    const Json &jsonTarget = req.args.Get("target");
+    bool fScene = jsonTarget.IsNull() || (jsonTarget.IsString() && StrLower(jsonTarget.AsString()) == "scene");
+    if (fScene)
+    {
+        // Scene sound events at this frame (undoable)
+        if (!pscen->FRemSnd(sty))
+            return FFailEngine(req, "could not remove the scene sound");
+    }
+    else
+    {
+        PACTR pactr, pactrDup;
+        if (!FResolveActor(req, "target", &pactr))
+            return fFalse;
+        if (!pactr->FDup(&pactrDup))
+            return FFailEngine(req, "could not remove the sound");
+        if (!pactr->FDeleteSndCore(sty, fMotionMatch))
+        {
+            pactr->Restore(pactrDup);
+            ReleasePpo(&pactrDup);
+            return FFailEngine(req, "could not remove the actor's sound");
+        }
+        pactr->FCreateUndo(pactrDup, fTrue);
+        ReleasePpo(&pactrDup);
+    }
+    pmvie->SetDirty();
+    RefreshViews(pmvie);
+    req.result.Set("frame", pscen->Nfrm());
+    req.result.Set("note", "removes the sound events of that type that start at this frame (see describe_timeline "
+                           "for when sounds start)");
+    return fTrue;
+}
+
 const CommandInfo krgcmdMedia[] = {
     {"add_text", _FCmdAddText, fTrue},
     {"import_sound", _FCmdImportSound, fTrue},
     {"attach_sound", _FCmdAttachSound, fTrue},
+    {"edit_text", _FCmdEditText, fTrue},
+    {"remove_text", _FCmdRemoveText, fTrue},
+    {"remove_sound", _FCmdRemoveSound, fTrue},
     {nullptr, nullptr, fFalse},
 };
 

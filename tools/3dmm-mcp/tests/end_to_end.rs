@@ -250,6 +250,58 @@ async fn builds_saves_and_reopens_a_two_scene_movie() -> Result<()> {
         "{reopened2}"
     );
 
+    // ---- Editing: duplicate, reorder, trim, text
+    s.call("duplicate_scene", json!({"index": 1})).await?;
+    s.call("move_scene", json!({"from": 2, "to": 0})).await?;
+    let state = s.call("get_state", json!({"all_scenes": true})).await?;
+    ensure!(state["movie"]["scene_count"] == 3, "{state}");
+    s.call("select_scene", json!({"index": 1})).await?;
+    let trimmed = s
+        .call("trim_scene", json!({"keep_from": 1, "keep_to": 12}))
+        .await?;
+    ensure!(
+        trimmed["last_frame"].as_i64().unwrap() - trimmed["first_frame"].as_i64().unwrap() == 11,
+        "{trimmed}"
+    );
+    s.call(
+        "edit_text",
+        json!({"index": 0, "text": "Edited title", "color": "red"}),
+    )
+    .await?;
+
+    // ---- Video: frames and audio cues, then ffmpeg (skipped without ffmpeg)
+    let media_dir = out.join("media");
+    std::fs::create_dir_all(&media_dir)?;
+    let manifest = s.call("export_media", json!({"dir": media_dir})).await?;
+    ensure!(
+        manifest["scenes"].as_array().unwrap().len() == 3,
+        "{manifest}"
+    );
+    let cue_files: Vec<&str> = manifest["cues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|c| c["file"].as_str())
+        .collect();
+    ensure!(
+        cue_files.iter().any(|f| f.ends_with(".wav")),
+        "imported WAV in the cues: {manifest}"
+    );
+    if threedmm_mcp::video::find_ffmpeg().is_ok() {
+        let mp4 = out.join("e2e.mp4");
+        let options = threedmm_mcp::video::VideoOptions {
+            scale: 1,
+            transition_seconds: 1.0,
+            audio: true,
+        };
+        let summary = threedmm_mcp::video::render(&manifest, &mp4, &options).await?;
+        println!("video: {summary}");
+        ensure!(summary["sounds"].as_u64().unwrap() >= 2, "{summary}");
+        ensure!(std::fs::metadata(&mp4)?.len() > 50_000, "video written");
+    } else {
+        println!("ffmpeg not found; skipping the MP4 step");
+    }
+
     let played = s
         .call(
             "play",

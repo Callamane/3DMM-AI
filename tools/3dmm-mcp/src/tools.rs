@@ -296,6 +296,39 @@ pub fn all_tools() -> Vec<ToolSpec> {
             obj(json!({"index": {"type": "integer", "minimum": 0}}), &[]),
         ),
         bridge(
+            "move_scene",
+            "Reorder scenes: move scene 'from' so it ends up at index 'to' (0-based).",
+            obj(json!({"from": {"type": "integer", "minimum": 0}, "to": {"type": "integer", "minimum": 0}}), &["from", "to"]),
+        ),
+        bridge(
+            "duplicate_scene",
+            "Copy a scene (default: the current one) and insert the copy right after it, e.g. to make a variation \
+             or a second take. The copy's actors get new ids.",
+            obj(json!({"index": {"type": "integer", "minimum": 0}}), &[]),
+        ),
+        bridge(
+            "import_scenes",
+            "Insert scenes from another .3mm movie into this one (all of them, or the listed indexes), at \
+             position 'at' (default: the end). Use it to combine movies or reuse a scene.",
+            obj(
+                json!({
+                    "path": {"type": "string", "description": "Absolute path of the .3mm to take scenes from."},
+                    "scenes": {"type": "array", "items": {"type": "integer"}, "description": "Scene indexes in that movie (default: all)."},
+                    "at": {"type": "integer", "minimum": 0}
+                }),
+                &["path"],
+            ),
+        ),
+        bridge(
+            "trim_scene",
+            "Cut the current scene down to frames keep_from..keep_to, deleting everything before and after \
+             (the Studio's chop tools). Frame numbers can shift; check with describe_timeline.",
+            obj(
+                json!({"keep_from": {"type": "integer", "minimum": 1}, "keep_to": {"type": "integer", "minimum": 1}}),
+                &[],
+            ),
+        ),
+        bridge(
             "goto_frame",
             format!("Move the current scene's playhead. Edits apply at the current frame. {FRAMES}"),
             obj(
@@ -542,6 +575,39 @@ pub fn all_tools() -> Vec<ToolSpec> {
             ),
         ),
         bridge(
+            "edit_text",
+            "Change an existing text box (index from describe_scene/describe_timeline): replace its text and/or \
+             change its colour and size. The box keeps its place and timing.",
+            obj(
+                json!({
+                    "index": {"type": "integer", "minimum": 0},
+                    "text": {"type": "string"},
+                    "color": {"description": "\"#rrggbb\", a colour name, or [r,g,b]."},
+                    "size": {"type": "integer", "minimum": 6, "maximum": 200}
+                }),
+                &["index"],
+            ),
+        ),
+        bridge(
+            "remove_text",
+            "Delete a text box from the current scene (index from describe_scene/describe_timeline).",
+            obj(json!({"index": {"type": "integer", "minimum": 0}}), &["index"]),
+        ),
+        bridge(
+            "remove_sound",
+            "Remove sounds of one type that start at a frame, from the scene (target \"scene\") or an actor. \
+             describe_timeline lists when sounds start (sounds_start_at, scene_sounds_start_at).",
+            obj(
+                json!({
+                    "type": {"type": "string", "enum": ["sfx", "speech", "music"]},
+                    "target": {"type": ["string", "integer"], "default": "scene"},
+                    "frame": frame_prop(),
+                    "motion_match": {"type": "boolean", "default": false}
+                }),
+                &["type"],
+            ),
+        ),
+        bridge(
             "import_sound",
             "Copy a sound file from disk into the movie and get a sound_id (\"user:N\") for attach_sound. \
              sfx/speech take .wav or .mp3; music takes .mid. Tip: on macOS, `say -o line.wav \
@@ -750,6 +816,10 @@ pub const WORKFLOW_GUIDE: &str = r#"# Making a movie with 3D Movie Maker
 8. **Check** — `describe_timeline` summarises who does what when (cameras, actions, movement, text, sounds). `render_frame(frame)` shows a frame. `get_state(all_scenes: true)` gives every scene's length and the total.
 9. **More scenes** — `add_scene` again (actors belong to one scene; add them again); `set_transition("dissolve")` on the earlier scene.
 10. **Save and share** — `save_movie(path: ".../name.3mm")` keeps an editable movie; `export_video(path: ".../name.mp4")` makes a video with sound that plays anywhere. `play(from_start: true, wait: true)` shows it in the app.
+
+Editing
+- Scenes: `move_scene`, `duplicate_scene`, `import_scenes` (from another .3mm), `trim_scene(keep_from, keep_to)`, `delete_scene`.
+- Text: `edit_text(index, text, color, size)`, `remove_text(index)`. Sound: `remove_sound(type, target, frame)`.
 
 Safety and speed
 - There is one level of undo. Before something risky, `checkpoint(name)`; `restore_checkpoint(name)` goes back.
