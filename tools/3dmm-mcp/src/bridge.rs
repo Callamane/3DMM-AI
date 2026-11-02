@@ -31,6 +31,32 @@ impl std::fmt::Display for BridgeError {
 
 impl std::error::Error for BridgeError {}
 
+/// The connection to the app broke (closed, reset): the app has most likely
+/// stopped. Distinct from a timeout, where the app is alive but busy.
+#[derive(Debug)]
+pub struct ConnectionLost(pub String);
+
+impl std::fmt::Display for ConnectionLost {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for ConnectionLost {}
+
+/// Nothing is listening on the bridge port: the app isn't running (with
+/// automation enabled)
+#[derive(Debug)]
+pub struct NotRunning(pub String);
+
+impl std::fmt::Display for NotRunning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for NotRunning {}
+
 pub struct BridgeClient {
     reader: BufReader<OwnedReadHalf>,
     writer: OwnedWriteHalf,
@@ -40,9 +66,19 @@ pub struct BridgeClient {
 impl BridgeClient {
     /// Connects and performs the `hello` handshake.
     pub async fn connect(port: u16) -> Result<Self> {
-        let stream = TcpStream::connect(("127.0.0.1", port))
-            .await
-            .with_context(|| format!("cannot connect to 3DMMEx on 127.0.0.1:{port}"))?;
+        let stream = match TcpStream::connect(("127.0.0.1", port)).await {
+            Ok(stream) => stream,
+            Err(err) if err.kind() == std::io::ErrorKind::ConnectionRefused => {
+                return Err(
+                    NotRunning(format!("nothing is listening on 127.0.0.1:{port} ({err})")).into(),
+                )
+            }
+            Err(err) => {
+                return Err(anyhow!(
+                    "cannot connect to 3DMMEx on 127.0.0.1:{port}: {err}"
+                ))
+            }
+        };
         stream.set_nodelay(true)?;
         let (read, write) = stream.into_split();
         let mut client = Self {
@@ -70,14 +106,19 @@ impl BridgeClient {
         self.writer
             .write_all(line.as_bytes())
             .await
-            .context("lost connection to 3DMMEx")?;
+            .map_err(|err| ConnectionLost(format!("lost connection to 3DMMEx ({err})")))?;
 
         let read = async {
             loop {
                 let mut reply = String::new();
-                let n = self.reader.read_line(&mut reply).await?;
+                let n =
+                    self.reader.read_line(&mut reply).await.map_err(|err| {
+                        ConnectionLost(format!("lost connection to 3DMMEx ({err})"))
+                    })?;
                 if n == 0 {
-                    bail!("3DMMEx closed the connection");
+                    return Err(anyhow::Error::new(ConnectionLost(
+                        "3DMMEx closed the connection".into(),
+                    )));
                 }
                 let reply: Value = serde_json::from_str(reply.trim())
                     .with_context(|| format!("malformed reply from 3DMMEx: {reply}"))?;

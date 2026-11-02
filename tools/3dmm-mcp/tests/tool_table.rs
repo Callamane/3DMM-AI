@@ -126,3 +126,23 @@ fn unknown_and_missing_arguments_are_rejected() {
     let err = check_args(find("add_scene"), &json!({})).unwrap_err();
     assert!(err.contains("needs background"), "{err}");
 }
+
+#[test]
+fn wrong_types_are_rejected() {
+    let tools = all_tools();
+    let find = |name: &str| tools.iter().find(|t| t.name == name).unwrap();
+    let err = check_args(find("delete_scene"), &json!({"index": "2"})).unwrap_err();
+    assert!(err.contains("'index'") && err.contains("integer"), "{err}");
+    // Whole numbers written as 2.0 are fine
+    assert!(check_args(find("delete_scene"), &json!({"index": 2.0})).is_ok());
+    assert!(check_args(find("delete_scene"), &json!({"index": 2.5})).is_err());
+    let err = check_args(
+        find("script_scene"),
+        &json!({"background": "diner", "cast": [], "lines": [], "subtitles": "yes"}),
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("'subtitles'") && err.contains("boolean"),
+        "{err}"
+    );
+}

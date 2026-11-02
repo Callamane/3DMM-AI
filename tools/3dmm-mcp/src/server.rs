@@ -17,7 +17,7 @@ use rmcp::{ErrorData as McpError, RoleServer, ServerHandler};
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
-use crate::bridge::{BridgeClient, BridgeError};
+use crate::bridge::{BridgeClient, BridgeError, ConnectionLost, NotRunning};
 use crate::launcher;
 use crate::script;
 use crate::speech;
@@ -116,8 +116,14 @@ impl ThreeDmmServer {
     ) -> anyhow::Result<&'a mut BridgeClient> {
         if guard.is_none() {
             match BridgeClient::connect(self.port).await {
-                Ok(client) => *guard = Some(client),
-                Err(err) if self.autolaunch => {
+                Ok(client) => {
+                    *guard = Some(client);
+                    // Still the same app (it was only out of reach): nothing lost
+                    self.recovery.lock().expect("recovery lock").connection_lost = false;
+                }
+                // Only start the app when nothing is listening: an app that is
+                // there but busy must not get a second copy beside it
+                Err(err) if self.autolaunch && err.downcast_ref::<NotRunning>().is_some() => {
                     tracing::info!("3DMMEx not reachable ({err:#}); launching it");
                     let (client, exe) = launcher::launch(self.port).await?;
                     tracing::info!("launched {}", exe.display());
@@ -154,9 +160,11 @@ impl ThreeDmmServer {
                 .lock()
                 .expect("recovery lock")
                 .record(cmd, value),
-            // Bridge errors are normal answers; anything else means the
-            // connection is unusable, so reconnect next time
-            Err(err) if err.downcast_ref::<BridgeError>().is_none() => {
+            // A broken connection means the app has most likely stopped:
+            // reconnect (or start it) next time. Bridge errors are normal
+            // answers, and after a timeout the app is alive but busy, so the
+            // connection is kept (late replies are skipped by id).
+            Err(err) if err.downcast_ref::<ConnectionLost>().is_some() => {
                 *guard = None;
                 self.recovery.lock().expect("recovery lock").connection_lost = true;
             }
@@ -201,6 +209,7 @@ impl ThreeDmmServer {
         let action = action_given.clone().unwrap_or_else(|| json!("Talk"));
 
         let wav = speech::synthesize(&text, voice).await?;
+        let _remove_wav = RemoveOnDrop(wav.clone());
         let seconds = speech::wav_seconds(&wav)?;
         let label: String = text.chars().take(40).collect();
         let imported = self
@@ -210,7 +219,6 @@ impl ThreeDmmServer {
                 timeout,
             )
             .await?;
-        let _ = std::fs::remove_file(&wav);
         let sound_id = imported["sound_id"].clone();
 
         let mut attach = json!({"sound": sound_id, "target": actor});
@@ -251,7 +259,9 @@ impl ThreeDmmServer {
                 .await
             {
                 Ok(animated) => result["action"] = animated["action"].clone(),
-                Err(err) if action_given.is_none() => {
+                Err(err)
+                    if action_given.is_none() && err.downcast_ref::<BridgeError>().is_some() =>
+                {
                     // Not every actor can talk: hold the rest pose for the
                     // line instead, which also keeps the scene long enough
                     self.bridge_call("animate", animate(json!(0)), timeout)
@@ -416,7 +426,7 @@ impl ThreeDmmServer {
         let mut script = script::parse(&args).map_err(anyhow::Error::msg)?;
         script::assign_voices(&mut script.cast, &speech::installed_voices().await);
         // Rebuilding a scene in place: check the index before building
-        let replace = args.get("replace").and_then(Value::as_i64);
+        let replace = args.get("replace").and_then(script::whole_number);
         if let Some(index) = replace {
             let state = self.bridge_call("get_state", json!({}), timeout).await?;
             let count = state["movie"]["scene_count"].as_i64().unwrap_or(0);
@@ -427,12 +437,25 @@ impl ThreeDmmServer {
                 );
             }
         }
-        let mut result = self.build_scene(&script, true, timeout).await?;
+        let mut result = self.build_scene(&script, true, timeout).await.map_err(|err| {
+            anyhow::anyhow!(
+                "{}. The new scene may be partly built as the movie's last scene: delete_scene removes it, or \
+                 restore_checkpoint(\"before script_scene\") goes back (when the movie had scenes before)",
+                describe_error(&err)
+            )
+        })?;
         if let Some(index) = replace {
             // The new scene was added at the end: drop the old one and move
             // the new one into its place
             self.bridge_call("delete_scene", json!({"index": index}), timeout)
-                .await?;
+                .await
+                .map_err(|err| {
+                    anyhow::anyhow!(
+                        "replacing scene {index}: the new version was built as the last scene, but the old one \
+                         could not be deleted: {}",
+                        describe_error(&err)
+                    )
+                })?;
             let built = result["scene_index"].as_i64().unwrap_or(index + 1) - 1;
             if built != index {
                 self.bridge_call("move_scene", json!({"from": built, "to": index}), timeout)
@@ -500,7 +523,9 @@ impl ThreeDmmServer {
                 .await
                 .map_err(|err| {
                     anyhow::anyhow!(
-                        "scenes[{i}]: {} (scenes before it were built)",
+                        "scenes[{i}]: {}. Scenes before it were built and scene {i} may be partly built as the \
+                         last scene; restore_checkpoint(\"before script_movie\") goes back when the movie had \
+                         scenes before, else delete_scene the partial one",
                         describe_error(&err)
                     )
                 })?;
@@ -664,6 +689,17 @@ impl ThreeDmmServer {
             }
         }
         let floor = blocked["camera"]["visible_floor"].clone();
+        if floor.get("bottom_left").is_none()
+            && script
+                .lines
+                .iter()
+                .any(|l| matches!(l, script::Line::Enter { .. } | script::Line::Exit { .. }))
+        {
+            notes.push(
+                "this camera doesn't see the floor's edges, so entrances and exits are guesses"
+                    .into(),
+            );
+        }
         let edge = |key: &str| {
             (
                 floor[key]["x"].as_f64().unwrap_or(0.0),
@@ -868,7 +904,11 @@ impl ThreeDmmServer {
                     };
                     // Stop where nobody (or nothing) already stands
                     let others = self.others_positions(who, frame, timeout).await?;
-                    let dest = script::clear_spot(dest, &others);
+                    let dest = if face.is_some() {
+                        script::clear_spot(dest, &others)
+                    } else {
+                        dest // an explicit spot is where the script wants them
+                    };
                     let walk = self
                         .walking_action(&template_of(who), &mut walks, timeout)
                         .await;
@@ -1196,6 +1236,15 @@ impl ThreeDmmServer {
     }
 }
 
+/// Deletes a scratch file however the function holding it returns
+struct RemoveOnDrop(std::path::PathBuf);
+
+impl Drop for RemoveOnDrop {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 /// The on-stage character standing nearest to `who`, by their marks
 fn nearest(marks: &HashMap<String, (f64, f64)>, on_stage: &[String], who: &str) -> Option<String> {
     let (x, z) = *marks.get(who)?;
@@ -1213,13 +1262,7 @@ fn describe_error(err: &anyhow::Error) -> String {
         Some(bridge) => format!("{} [{}]", bridge.message, bridge.code),
         None => {
             let text = format!("{err:#}");
-            let lost = [
-                "closed the connection",
-                "Broken pipe",
-                "Connection reset",
-                "connection refused",
-            ];
-            if lost.iter().any(|l| text.contains(l)) {
+            if err.downcast_ref::<ConnectionLost>().is_some() {
                 format!(
                     "{text}. 3D Movie Maker seems to have stopped; the next call starts it again with an empty \
                      movie (reopen your last save or checkpoint with open_movie)"

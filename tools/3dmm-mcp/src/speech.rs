@@ -71,7 +71,8 @@ pub async fn synthesize(text: &str, voice: Option<&str>) -> Result<PathBuf> {
     } else if cfg!(target_os = "windows") {
         // Text and path are passed through the environment, never spliced
         // into the script
-        let script = "Add-Type -AssemblyName System.Speech; \
+        // Stop on errors: a bad voice name must fail, not fall back silently
+        let script = "$ErrorActionPreference = 'Stop'; Add-Type -AssemblyName System.Speech; \
             $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; \
             if ($env:TDMM_VOICE) { $s.SelectVoice($env:TDMM_VOICE) }; \
             $s.SetOutputToWaveFile($env:TDMM_WAV); $s.Speak($env:TDMM_TEXT); $s.Dispose()";
@@ -91,6 +92,7 @@ pub async fn synthesize(text: &str, voice: Option<&str>) -> Result<PathBuf> {
         bail!("speak_line needs macOS (`say`) or Windows (SAPI); import a WAV with import_sound instead");
     };
     if !status.success() {
+        let _ = std::fs::remove_file(&path);
         bail!(
             "speech synthesis failed{}",
             voice

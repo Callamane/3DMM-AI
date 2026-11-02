@@ -117,8 +117,72 @@ fn seconds(v: &Value, key: &str, at: &str) -> Result<f64, String> {
     Ok(s)
 }
 
+/// Keys a scene script and a line may have; anything else is most likely a
+/// typo ("subtitle", "transitions") that would otherwise do nothing
+const SCENE_KEYS: &[&str] = &[
+    "background",
+    "camera",
+    "title",
+    "layout",
+    "camera_style",
+    "transition",
+    "subtitles",
+    "music",
+    "cast",
+    "lines",
+    "preview",
+    "replace",
+];
+const LINE_KEYS: &[&str] = &[
+    "who",
+    "says",
+    "action",
+    "does",
+    "seconds",
+    "wait",
+    "enters",
+    "exits",
+    "walks_to",
+    "throws",
+    "at",
+    "reaction",
+    "hit_sound",
+    "sound",
+    "on",
+];
+const CAST_KEYS: &[&str] = &["name", "actor", "voice"];
+
+fn check_keys(v: &Value, allowed: &[&str], at: &str) -> Result<(), String> {
+    if let Some(object) = v.as_object() {
+        if let Some(key) = object.keys().find(|k| !allowed.contains(&k.as_str())) {
+            return Err(format!(
+                "{at}'{key}' isn't a field here; the fields are: {}",
+                allowed.join(", ")
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A whole number, also when written as 3.0
+pub fn whole_number(v: &Value) -> Option<i64> {
+    v.as_i64()
+        .or_else(|| v.as_f64().filter(|f| f.fract() == 0.0).map(|f| f as i64))
+}
+
 /// Parses and checks a script, naming the exact entry at fault.
 pub fn parse(args: &Value) -> Result<Script, String> {
+    check_keys(args, SCENE_KEYS, "")?;
+    if let Some(camera) = args.get("camera") {
+        if whole_number(camera).is_none() {
+            return Err("'camera' must be a camera number".into());
+        }
+    }
+    if let Some(subtitles) = args.get("subtitles") {
+        if !subtitles.is_boolean() {
+            return Err("'subtitles' must be true or false".into());
+        }
+    }
     let background = string(args, "background")
         .ok_or("'background' is required (a set name or description word, e.g. \"diner\")")?;
     let layout = string(args, "layout").unwrap_or_else(|| "conversation".into());
@@ -141,6 +205,7 @@ pub fn parse(args: &Value) -> Result<Script, String> {
     let mut cast: Vec<CastMember> = Vec::new();
     for (i, member) in cast_json.iter().enumerate() {
         let at = format!("cast[{i}]");
+        check_keys(member, CAST_KEYS, &format!("{at}: "))?;
         let name = string(member, "name").ok_or(format!("{at}: 'name' is required"))?;
         let actor = string(member, "actor").ok_or(format!(
             "{at}: 'actor' is required (a template such as \"Frank\", or a description word like \"robot\")"
@@ -171,6 +236,7 @@ pub fn parse(args: &Value) -> Result<Script, String> {
     let mut lines = Vec::new();
     for (i, line) in lines_json.iter().enumerate() {
         let at = format!("lines[{i}]");
+        check_keys(line, LINE_KEYS, &format!("{at}: "))?;
         let kinds = LINE_KINDS
             .iter()
             .filter(|k| line.get(**k).is_some())
@@ -305,7 +371,7 @@ pub fn parse(args: &Value) -> Result<Script, String> {
 
     Ok(Script {
         background,
-        camera: args.get("camera").and_then(Value::as_i64),
+        camera: args.get("camera").and_then(whole_number),
         title: string(args, "title"),
         layout,
         camera_style,
@@ -351,11 +417,10 @@ fn check_staging(cast: &[CastMember], lines: &[Line]) -> Result<(), String> {
         let at = format!("lines[{i}]");
         let Some(who) = line.who() else { continue };
         match line {
-            Line::Enter { .. } => {
-                if here(&on_stage, who) {
-                    return Err(format!("{at}: {who} enters but is already on stage"));
-                }
+            Line::Enter { .. } if here(&on_stage, who) => {
+                return Err(format!("{at}: {who} enters but is already on stage"));
             }
+            Line::Enter { .. } => {}
             _ if !here(&on_stage, who) => {
                 return Err(format!(
                     "{at}: {who} isn't on stage here (they haven't entered yet, or have exited)"
@@ -795,6 +860,30 @@ mod tests {
             .unwrap_err()
             .starts_with("scenes[1]: lines[0]"));
         assert!(parse_movie(&json!({"scenes": []})).is_err());
+    }
+
+    #[test]
+    fn typos_and_wrong_types_are_caught() {
+        let mut typo = sample();
+        typo["subtitle"] = json!(true);
+        let err = parse(&typo).unwrap_err();
+        assert!(
+            err.contains("'subtitle'") && err.contains("subtitles"),
+            "{err}"
+        );
+        let mut line_typo = sample();
+        line_typo["lines"][0]["say"] = json!("hi");
+        assert!(parse(&line_typo)
+            .unwrap_err()
+            .starts_with("lines[0]: 'say'"));
+        let mut wrong = sample();
+        wrong["subtitles"] = json!("true");
+        assert!(parse(&wrong).unwrap_err().contains("true or false"));
+        let mut camera = sample();
+        camera["camera"] = json!(2.0);
+        assert_eq!(parse(&camera).unwrap().camera, Some(2));
+        camera["camera"] = json!("two");
+        assert!(parse(&camera).is_err());
     }
 
     #[test]

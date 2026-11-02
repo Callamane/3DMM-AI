@@ -12,9 +12,9 @@ use tokio::process::Command;
 /// cope better with a standard rate).
 const OUTPUT_FPS: u32 = 30;
 
-/// Rate the in-between frames are made at when smoothing (the movie's
-/// own frames stay; three motion-interpolated ones go between each pair)
-const SMOOTH_FPS: u32 = 24;
+/// Rate the in-between frames are made at when smoothing: straight to the
+/// output rate, so every output frame is evenly spaced
+const SMOOTH_FPS: u32 = OUTPUT_FPS;
 
 pub struct VideoOptions {
     pub scale: u32,
@@ -286,44 +286,59 @@ pub async fn render(manifest: &Value, out: &Path, options: &VideoOptions) -> Res
         "-t".into(),
         format!("{:.3}", plan.total),
     ]);
-    match options.max_megabytes {
-        None => {
-            args.extend([
-                "-crf".into(),
-                "18".into(),
-                out.to_string_lossy().into_owned(),
-            ]);
-            run_ffmpeg(&ffmpeg, &args).await?;
-        }
-        Some(megabytes) => {
-            // Two passes: the first measures, the second spends the bits
-            let kbps = video_kbps_for(megabytes, plan.total, has_audio);
-            let log = out.with_extension("2pass");
-            let scratch = out.with_extension("pass1.mp4");
-            let pass = |n: &str, target: &Path| {
-                let mut a = args.clone();
-                a.extend([
-                    "-b:v".into(),
-                    format!("{kbps:.0}k"),
-                    "-pass".into(),
-                    n.into(),
-                    "-passlogfile".into(),
-                    log.to_string_lossy().into_owned(),
-                    target.to_string_lossy().into_owned(),
+    let encoded: Result<()> = async {
+        match options.max_megabytes {
+            None => {
+                args.extend([
+                    "-crf".into(),
+                    "18".into(),
+                    out.to_string_lossy().into_owned(),
                 ]);
-                a
-            };
-            let first = run_ffmpeg(&ffmpeg, &pass("1", &scratch)).await;
-            let _ = std::fs::remove_file(&scratch);
-            let second = match first {
-                Ok(()) => run_ffmpeg(&ffmpeg, &pass("2", out)).await,
-                Err(err) => Err(err),
-            };
-            for suffix in ["2pass-0.log", "2pass-0.log.mbtree"] {
-                let _ = std::fs::remove_file(out.with_extension(suffix));
+                run_ffmpeg(&ffmpeg, &args).await?;
             }
-            second?;
+            Some(megabytes) => {
+                // Two passes: the first measures, the second spends the bits
+                let kbps = video_kbps_for(megabytes, plan.total, has_audio);
+                let log = out.with_extension("2pass");
+                // The first pass's picture is thrown away: keep it out of the
+                // caller's folder
+                let scratch = std::env::temp_dir().join(format!(
+                    "3dmm-pass1-{}-{}.mp4",
+                    std::process::id(),
+                    out.file_stem().and_then(|s| s.to_str()).unwrap_or("movie")
+                ));
+                let pass = |n: &str, target: &Path| {
+                    let mut a = args.clone();
+                    a.extend([
+                        "-b:v".into(),
+                        format!("{kbps:.0}k"),
+                        "-pass".into(),
+                        n.into(),
+                        "-passlogfile".into(),
+                        log.to_string_lossy().into_owned(),
+                        target.to_string_lossy().into_owned(),
+                    ]);
+                    a
+                };
+                let first = run_ffmpeg(&ffmpeg, &pass("1", &scratch)).await;
+                let _ = std::fs::remove_file(&scratch);
+                let second = match first {
+                    Ok(()) => run_ffmpeg(&ffmpeg, &pass("2", out)).await,
+                    Err(err) => Err(err),
+                };
+                for suffix in ["2pass-0.log", "2pass-0.log.mbtree"] {
+                    let _ = std::fs::remove_file(out.with_extension(suffix));
+                }
+                second?;
+            }
         }
+        Ok(())
+    }
+    .await;
+    if let Err(err) = encoded {
+        // Don't leave a truncated video behind
+        let _ = std::fs::remove_file(out);
+        return Err(err);
     }
     let bytes = std::fs::metadata(out).map(|m| m.len()).unwrap_or(0);
     Ok(json!({

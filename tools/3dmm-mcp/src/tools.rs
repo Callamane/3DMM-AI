@@ -159,6 +159,44 @@ fn bridge(name: &'static str, description: impl Into<String>, schema: Value) -> 
 /// Checks arguments against the tool's schema before anything runs: an
 /// unknown name (a typo, or `scene` where the tool takes `index`) would
 /// otherwise be ignored and the tool would act on the default target.
+/// Whether a value matches a JSON-schema "type" (a name or a list of names;
+/// absent means anything). Whole numbers written as 3.0 count as integers.
+fn value_has_type(value: &Value, expected: &Value) -> bool {
+    let one = |t: &str| match t {
+        "integer" => value.as_i64().is_some() || value.as_f64().is_some_and(|f| f.fract() == 0.0),
+        "number" => value.is_number(),
+        "boolean" => value.is_boolean(),
+        "string" => value.is_string(),
+        "array" => value.is_array(),
+        "object" => value.is_object(),
+        _ => true,
+    };
+    match expected {
+        Value::String(t) => one(t),
+        Value::Array(ts) => ts.iter().filter_map(Value::as_str).any(one),
+        _ => true,
+    }
+}
+
+fn describe_type(expected: &Value) -> String {
+    match expected {
+        Value::String(t) => format!(
+            "a{} {t}",
+            if t.starts_with(['a', 'e', 'i', 'o', 'u']) {
+                "n"
+            } else {
+                ""
+            }
+        ),
+        Value::Array(ts) => ts
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>()
+            .join(" or "),
+        _ => "anything".into(),
+    }
+}
+
 pub fn check_args(spec: &ToolSpec, args: &Value) -> Result<(), String> {
     let Some(properties) = spec.schema.get("properties").and_then(Value::as_object) else {
         return Ok(());
@@ -190,6 +228,18 @@ pub fn check_args(spec: &ToolSpec, args: &Value) -> Result<(), String> {
                     .join(", "),
                 takes()
             ));
+        }
+    }
+    if let Some(args) = args.as_object() {
+        for (name, value) in args {
+            let expected = &properties[name]["type"];
+            if !value_has_type(value, expected) {
+                return Err(format!(
+                    "{}: '{name}' must be {}, not {value}",
+                    spec.name,
+                    describe_type(expected)
+                ));
+            }
         }
     }
     let missing: Vec<&str> = spec
