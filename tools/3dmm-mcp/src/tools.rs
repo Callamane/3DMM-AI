@@ -16,6 +16,8 @@ pub enum Kind {
     BridgeImage(&'static str),
     /// Run several tool calls in order.
     Batch,
+    /// Export the movie as a video file (bridge export_media + ffmpeg).
+    ExportVideo,
     /// Synthesize a spoken line, import it and (optionally) attach and act it.
     SpeakLine,
 }
@@ -643,6 +645,24 @@ pub fn all_tools() -> Vec<ToolSpec> {
              Positions use the stage coordinates of the scene's opening camera.",
             obj(json!({"scene": {"type": "integer", "minimum": 0, "description": "Default: the current scene."}}), &[]),
         ),
+        spec(
+            "export_video",
+            Kind::ExportVideo,
+            "Export the movie as an MP4 video with sound: every scene rendered frame by frame, joined with \
+             the scenes' transitions (dissolve, fade to black/white), and all sounds mixed in at their frames \
+             (dialogue, effects, imported sounds, and background music rendered from MIDI). Plays anywhere, \
+             unlike the .3mm. Needs ffmpeg installed. Takes a few seconds per scene.",
+            obj(
+                json!({
+                    "path": {"type": "string", "description": "Absolute output path ending in .mp4."},
+                    "scale": {"type": "integer", "enum": [1, 2, 3], "default": 2, "description": "Pixel scale of the 544x306 movie (2 = 1088x612)."},
+                    "audio": {"type": "boolean", "default": true},
+                    "transition_seconds": {"type": "number", "minimum": 0, "maximum": 5, "default": 1},
+                    "scene": {"type": "integer", "minimum": 0, "description": "Export only this scene."}
+                }),
+                &["path"],
+            ),
+        ),
         bridge(
             "export_frames",
             "Write a PNG image sequence of a scene's frames to a folder (e.g. to make a video with ffmpeg at 6 fps).",
@@ -703,7 +723,7 @@ pub fn all_tools() -> Vec<ToolSpec> {
     for tool in &mut tools {
         match tool.name {
             "play" => tool.timeout_secs = 15 * 60,
-            "export_frames" => tool.timeout_secs = 10 * 60,
+            "export_frames" | "export_video" => tool.timeout_secs = 20 * 60,
             "goto_studio" | "launch" | "preview_cameras" | "describe_timeline" => {
                 tool.timeout_secs = 120
             }
@@ -729,7 +749,7 @@ pub const WORKFLOW_GUIDE: &str = r#"# Making a movie with 3D Movie Maker
 7. **Camera and text** — `set_camera(camera, frame)` cuts within a scene. `add_text(text, kind: "caption", rect: "top"|"bottom"|"center", frame, until_frame, size, color)` for titles and subtitles.
 8. **Check** — `describe_timeline` summarises who does what when (cameras, actions, movement, text, sounds). `render_frame(frame)` shows a frame. `get_state(all_scenes: true)` gives every scene's length and the total.
 9. **More scenes** — `add_scene` again (actors belong to one scene; add them again); `set_transition("dissolve")` on the earlier scene.
-10. **Save** — `save_movie(path: ".../name.3mm")`. Optionally `export_frames` (PNG sequence) or `play(from_start: true, wait: true)`.
+10. **Save and share** — `save_movie(path: ".../name.3mm")` keeps an editable movie; `export_video(path: ".../name.mp4")` makes a video with sound that plays anywhere. `play(from_start: true, wait: true)` shows it in the app.
 
 Safety and speed
 - There is one level of undo. Before something risky, `checkpoint(name)`; `restore_checkpoint(name)` goes back.

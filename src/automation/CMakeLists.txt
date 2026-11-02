@@ -22,6 +22,7 @@ target_sources(studio
     "${CMAKE_CURRENT_SOURCE_DIR}/bridge.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/catalog.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/engine.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/exportcmd.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/mediacmd.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/observe.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/scenecmd.cpp"

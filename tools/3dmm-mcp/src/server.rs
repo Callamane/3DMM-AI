@@ -21,6 +21,7 @@ use crate::bridge::{BridgeClient, BridgeError};
 use crate::launcher;
 use crate::speech;
 use crate::tools::{all_tools, Kind, ToolSpec, WORKFLOW_GUIDE};
+use crate::video;
 
 const GUIDE_URI: &str = "3dmm://guide/workflow";
 
@@ -198,6 +199,64 @@ impl ThreeDmmServer {
         Ok(vec![ContentBlock::text(result.to_string())])
     }
 
+    async fn export_video(
+        &self,
+        args: Value,
+        timeout: Duration,
+    ) -> anyhow::Result<Vec<ContentBlock>> {
+        let path = args.get("path").and_then(Value::as_str).unwrap_or_default();
+        if path.is_empty() {
+            anyhow::bail!("pass 'path' (an absolute .mp4 path)");
+        }
+        let mut out = std::path::PathBuf::from(path);
+        if out.extension().is_none() {
+            out.set_extension("mp4");
+        }
+        if !out.is_absolute() {
+            anyhow::bail!("'path' must be absolute");
+        }
+        video::find_ffmpeg()?;
+        let options = video::VideoOptions {
+            scale: args
+                .get("scale")
+                .and_then(Value::as_u64)
+                .unwrap_or(2)
+                .clamp(1, 3) as u32,
+            transition_seconds: args
+                .get("transition_seconds")
+                .and_then(Value::as_f64)
+                .unwrap_or(1.0)
+                .clamp(0.0, 5.0),
+            audio: args.get("audio").and_then(Value::as_bool).unwrap_or(true),
+        };
+
+        // Frames and sounds go to a scratch folder that is removed afterwards
+        static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+        let work = std::env::temp_dir().join(format!(
+            "3dmm-export-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&work)?;
+        let mut media_args = json!({"dir": work, "audio": options.audio});
+        if let Some(scene) = args.get("scene") {
+            media_args["scene"] = scene.clone();
+        }
+        let result = async {
+            let manifest = self
+                .bridge_call("export_media", media_args, timeout)
+                .await?;
+            let mut summary = video::render(&manifest, &out, &options).await?;
+            if let Some(notes) = manifest.get("notes") {
+                summary["notes"] = notes.clone();
+            }
+            anyhow::Ok(summary)
+        }
+        .await;
+        let _ = std::fs::remove_dir_all(&work);
+        Ok(vec![ContentBlock::text(result?.to_string())])
+    }
+
     /// Runs one tool (anything but batch).
     async fn run_tool(&self, spec: &ToolSpec, args: Value) -> anyhow::Result<Vec<ContentBlock>> {
         let timeout = Duration::from_secs(spec.timeout_secs);
@@ -224,6 +283,7 @@ impl ThreeDmmServer {
                     ContentBlock::text(result.to_string()),
                 ])
             }
+            Kind::ExportVideo => self.export_video(args, timeout).await,
             Kind::Batch => anyhow::bail!("batch steps cannot themselves be batches"),
         }
     }

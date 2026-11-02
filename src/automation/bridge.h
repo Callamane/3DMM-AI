@@ -82,6 +82,7 @@ extern const CommandInfo krgcmdScene[];
 extern const CommandInfo krgcmdActor[];
 extern const CommandInfo krgcmdMedia[];
 extern const CommandInfo krgcmdObserve[];
+extern const CommandInfo krgcmdExport[];
 
 /***************************************************************************
     BRender number conversions. This build of BRender is fixed point

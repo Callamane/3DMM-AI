@@ -176,6 +176,16 @@ class MSND : public MSND_PAR
         AssertThis(0);
         return _fNoSound;
     }
+    // Finds the chunk holding the WAV/MP3 or MIDI data (used to export audio)
+    bool FFindSndData(CTG *pctg, PBLCK pblck)
+    {
+        AssertThis(0);
+        PCRF pcrf;
+        if (_fNoSound != tribool::tNo || (pcrf = _prca->PcrfFindChunk(_ctgSnd, _cnoSnd)) == pvNil)
+            return fFalse;
+        *pctg = _ctgSnd;
+        return pcrf->Pcfl()->FFind(_ctgSnd, _cnoSnd, pblck) && pblck->FUnpackData();
+    }
 
     void Play(int32_t objID, bool fLoop, bool fQueue, int32_t vlm, int32_t spr, bool fActr = fFalse,
               uint32_t dtsStart = 0);
