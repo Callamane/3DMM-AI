@@ -96,6 +96,7 @@ Json JsonActor(PMVIE pmvie, PACTR pactr, const StageFrame &stage, const CameraMo
         json.Set("lifetime", jsonLife);
     }
 
+    // Bounds from the last render (absent until the actor has been drawn)
     if (pactr->FOnStage() && pactr->FIsInView())
     {
         RC rc;
@@ -107,7 +108,6 @@ Json JsonActor(PMVIE pmvie, PACTR pactr, const StageFrame &stage, const CameraMo
         jsonRc.Set("bottom", rc.ypBottom);
         json.Set("screen_bounds", jsonRc);
     }
-    json.Set("in_view", pactr->FOnStage() && pactr->FIsInView());
     return json;
 }
 

@@ -5,6 +5,7 @@
 #include "bridge.h"
 
 #include <cmath>
+#include <filesystem>
 
 #include "pngwrite.h"
 
@@ -110,15 +111,11 @@ bool FRenderToPng(Request &req, const std::string &strPath, int32_t *pdxp, int32
 
 static std::string _StrDefaultCaptureDir(void)
 {
-    FNI fni;
-    STN stn;
-    if (!fni.FGetTemp())
+    std::error_code ec;
+    std::filesystem::path path = std::filesystem::temp_directory_path(ec);
+    if (ec)
         return ".";
-    fni.GetStnPath(&stn);
-    std::string str = StrFromStn(&stn);
-    while (!str.empty() && (str.back() == '/' || str.back() == '\\'))
-        str.pop_back();
-    return str;
+    return path.string();
 }
 
 static std::string _StrJoin(const std::string &strDir, const std::string &strLeaf)

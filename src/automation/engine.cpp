@@ -144,8 +144,10 @@ bool FResolveActor(Request &req, const char *pszName, PACTR *ppactr)
     std::string strWant = StrLower(json.AsString());
     std::string strNames;
     PGL pglpactr = pscen->PglRollCall();
-    PACTR pactrMatch = pvNil;
-    int32_t cmatch = 0;
+    // Exact (case-insensitive) matches win; otherwise a unique prefix, then a
+    // unique substring ("Bino" finds "Bino BeGood").
+    PACTR rgpactrMatch[3] = {pvNil, pvNil, pvNil};
+    int32_t rgcmatch[3] = {0, 0, 0};
     for (int32_t ipactr = 0; pglpactr != pvNil && ipactr < pglpactr->IvMac(); ipactr++)
     {
         PACTR pactr;
@@ -154,23 +156,38 @@ bool FResolveActor(Request &req, const char *pszName, PACTR *ppactr)
         if (!pmvie->FGetName(pactr->Arid(), &stn))
             continue;
         std::string strName = StrFromStn(&stn);
+        std::string strLower = StrLower(strName);
         if (!strNames.empty())
             strNames += ", ";
         strNames += "'" + strName + "' (id " + std::to_string(pactr->Arid()) + ")";
-        if (StrLower(strName) == strWant)
+        int imatch = -1;
+        if (strLower == strWant)
+            imatch = 0;
+        else if (strLower.compare(0, strWant.size(), strWant) == 0)
+            imatch = 1;
+        else if (strLower.find(strWant) != std::string::npos)
+            imatch = 2;
+        if (imatch >= 0)
         {
-            pactrMatch = pactr;
-            cmatch++;
+            rgpactrMatch[imatch] = pactr;
+            rgcmatch[imatch]++;
         }
     }
-    if (cmatch == 1)
+    int32_t cmatch = 0;
+    for (int imatch = 0; imatch < 3; imatch++)
     {
-        *ppactr = pactrMatch;
-        return fTrue;
+        cmatch = rgcmatch[imatch];
+        if (cmatch == 1)
+        {
+            *ppactr = rgpactrMatch[imatch];
+            return fTrue;
+        }
+        if (cmatch > 1)
+            break;
     }
     if (cmatch > 1)
     {
-        return req.Fail(kszErrBadArgs, "more than one actor is named '" + json.AsString() +
+        return req.Fail(kszErrBadArgs, "more than one actor matches '" + json.AsString() +
                                            "'; use the numeric id instead. Actors: " + strNames);
     }
     return req.Fail(kszErrNotFound, "no actor named '" + json.AsString() + "' in the current scene. " +

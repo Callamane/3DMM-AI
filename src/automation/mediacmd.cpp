@@ -204,6 +204,15 @@ static bool _FCmdAddText(Request &req)
     chp.grfont = pmvu->GrfontStyleTextCur();
     chp.acrFore = pmvu->AcrPaint();
     chp.acrBack = kacrClear;
+    if (chp.dypFont <= 0)
+    {
+        // The Studio's text settings are only initialized once its text
+        // tools have been used; fall back to the engine's text box defaults
+        chp.onn = vpappb->OnnDefVariable();
+        chp.dypFont = pmvie->Pmcc()->DypTboxDef();
+        chp.grfont = fontNil;
+        chp.acrFore = kacrBlack;
+    }
     if (!strFont.empty())
     {
         STN stn;

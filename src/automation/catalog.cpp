@@ -300,32 +300,50 @@ bool FResolveAction(Request &req, PTMPL ptmpl, const Json &jsonAction, int32_t *
     if (!jsonAction.IsString())
         return req.Fail(kszErrBadArgs, "'action' must be an action name or index (see list_actions)");
 
-    std::string strWant = StrLower(jsonAction.AsString());
-    int32_t anidPrefix = ivNil;
-    int32_t cPrefix = 0;
+    // Names may end in " *" (the Studio's marker for the walking family);
+    // ignore it. Exact match first, then a unique prefix, then a unique
+    // substring.
+    auto strip = [](std::string str) {
+        str = StrLower(str);
+        while (!str.empty() && (str.back() == '*' || str.back() == ' '))
+            str.pop_back();
+        return str;
+    };
+    std::string strWant = strip(jsonAction.AsString());
+    std::vector<int32_t> rgvecMatch[2];
     std::string strNames;
     for (int32_t anid = 0; anid < ptmpl->Cactn(); anid++)
     {
         std::string strName = StrActionName(ptmpl, anid);
-        std::string strLower = StrLower(strName);
+        std::string strLower = strip(strName);
         if (strLower == strWant)
         {
             *panid = anid;
             return fTrue;
         }
         if (strLower.compare(0, strWant.size(), strWant) == 0)
-        {
-            anidPrefix = anid;
-            cPrefix++;
-        }
+            rgvecMatch[0].push_back(anid);
+        else if (strLower.find(strWant) != std::string::npos)
+            rgvecMatch[1].push_back(anid);
         if (!strNames.empty())
             strNames += ", ";
         strNames += "'" + strName + "'";
     }
-    if (cPrefix == 1)
+    for (const std::vector<int32_t> &vecMatch : rgvecMatch)
     {
-        *panid = anidPrefix;
-        return fTrue;
+        if (vecMatch.size() == 1)
+        {
+            *panid = vecMatch[0];
+            return fTrue;
+        }
+        if (vecMatch.size() > 1)
+        {
+            std::string strMatches;
+            for (int32_t anid : vecMatch)
+                strMatches += (strMatches.empty() ? "'" : ", '") + StrActionName(ptmpl, anid) + "'";
+            return req.Fail(kszErrNotFound, "action '" + jsonAction.AsString() + "' is ambiguous; it matches " +
+                                                strMatches + ". Pass one of those names.");
+        }
     }
 
     STN stn;
