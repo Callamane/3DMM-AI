@@ -102,6 +102,62 @@ fn bridge(name: &'static str, description: impl Into<String>, schema: Value) -> 
     spec(name, Kind::Bridge(name), description, schema)
 }
 
+/// Checks arguments against the tool's schema before anything runs: an
+/// unknown name (a typo, or `scene` where the tool takes `index`) would
+/// otherwise be ignored and the tool would act on the default target.
+pub fn check_args(spec: &ToolSpec, args: &Value) -> Result<(), String> {
+    let Some(properties) = spec.schema.get("properties").and_then(Value::as_object) else {
+        return Ok(());
+    };
+    let takes = || {
+        let mut names: Vec<&str> = properties.keys().map(String::as_str).collect();
+        names.sort_unstable();
+        if names.is_empty() {
+            "no arguments".to_string()
+        } else {
+            names.join(", ")
+        }
+    };
+    if let Some(args) = args.as_object() {
+        let mut unknown: Vec<&str> = args
+            .keys()
+            .map(String::as_str)
+            .filter(|name| !properties.contains_key(*name))
+            .collect();
+        if !unknown.is_empty() {
+            unknown.sort_unstable();
+            return Err(format!(
+                "{} doesn't take {}; it takes: {}",
+                spec.name,
+                unknown
+                    .iter()
+                    .map(|name| format!("'{name}'"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                takes()
+            ));
+        }
+    }
+    let missing: Vec<&str> = spec
+        .schema
+        .get("required")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|name| args.get(*name).is_none())
+        .collect();
+    if !missing.is_empty() {
+        return Err(format!(
+            "{} needs {}; it takes: {}",
+            spec.name,
+            missing.join(", "),
+            takes()
+        ));
+    }
+    Ok(())
+}
+
 pub fn all_tools() -> Vec<ToolSpec> {
     let mut tools = vec![
         // ---------------------------------------------------------------
@@ -382,6 +438,8 @@ pub fn all_tools() -> Vec<ToolSpec> {
                     "shape": {"type": ["string", "integer"], "description": "Shape name/index from list_3d_word_styles (default normal)."},
                     "font": {"type": "string", "description": "Font id or name from list_3d_word_styles."},
                     "position": position_schema("Where to put it."),
+                    "facing": {"type": ["string", "number"], "description": "\"camera\" (default), \"away\", \"left\" or \"right\", or degrees turned counter-clockwise seen from above."},
+                    "action": {"type": ["string", "integer"], "description": "Starting action name or index from list_actions (e.g. a spin)."},
                     "name": {"type": "string"},
                     "frame": frame_prop()
                 }),
@@ -739,6 +797,15 @@ pub fn all_tools() -> Vec<ToolSpec> {
              Positions use the stage coordinates of the scene's opening camera.",
             obj(json!({"scene": {"type": "integer", "minimum": 0, "description": "Default: the current scene."}}), &[]),
         ),
+        bridge(
+            "review_movie",
+            "Check the whole movie for problems a viewer would notice, without looking at every frame: actors \
+             out of shot, cut off by the frame edge or hidden behind someone nearer the camera (flagged hardest \
+             while they speak), text too short to read, stretches over 8 s where nothing changes, empty or very \
+             short scenes, no sound at all. Each issue gives its scene, frames, actor, and a fix to try. Run it \
+             before saving or exporting, fix the warnings, and run it again.",
+            obj(json!({"scene": {"type": "integer", "minimum": 0, "description": "Review only this scene. Default: every scene."}}), &[]),
+        ),
         spec(
             "export_video",
             Kind::ExportVideo,
@@ -819,7 +886,7 @@ pub fn all_tools() -> Vec<ToolSpec> {
             "play" => tool.timeout_secs = 15 * 60,
             "export_frames" | "export_video" => tool.timeout_secs = 20 * 60,
             "goto_studio" | "launch" | "preview_cameras" | "describe_timeline" | "storyboard"
-            | "suggest_camera" => tool.timeout_secs = 120,
+            | "suggest_camera" | "review_movie" => tool.timeout_secs = 120,
             _ => {}
         }
     }
@@ -840,7 +907,7 @@ pub const WORKFLOW_GUIDE: &str = r#"# Making a movie with 3D Movie Maker
    - `animate(actor, action, seconds)` does an action on the spot (laugh, dance, think) and extends the scene.
    - Actors return to their rest pose afterwards (`then: "freeze"` to hold the last pose).
 7. **Camera and text** — `set_camera(camera, frame)` cuts within a scene. `add_text(text, kind: "caption", rect: "top"|"bottom"|"center", frame, until_frame, size, color)` for titles and subtitles.
-8. **Check** — `storyboard` shows a whole scene on one image; `suggest_camera` ranks angles for the actors in shot; `describe_timeline` summarises who does what when (cameras, actions, movement, text, sounds). `render_frame(frame)` shows a frame. `get_state(all_scenes: true)` gives every scene's length and the total.
+8. **Check** — `storyboard` shows a whole scene on one image; `suggest_camera` ranks angles for the actors in shot; `describe_timeline` summarises who does what when (cameras, actions, movement, text, sounds). `render_frame(frame)` shows a frame. `get_state(all_scenes: true)` gives every scene's length and the total. **`review_movie` checks everything at once** (actors out of shot, cut off or hidden while speaking, unreadable text, dead stretches) and says how to fix each problem; run it before saving and again after fixing.
 9. **More scenes** — `add_scene` again (actors belong to one scene; add them again); `set_transition("dissolve")` on the earlier scene.
 10. **Save and share** — `save_movie(path: ".../name.3mm")` keeps an editable movie; `export_video(path: ".../name.mp4")` makes a video with sound that plays anywhere. `play(from_start: true, wait: true)` shows it in the app.
 

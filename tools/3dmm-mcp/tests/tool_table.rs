@@ -2,8 +2,9 @@
 
 use std::collections::HashSet;
 
+use serde_json::json;
 use serde_json::Value;
-use threedmm_mcp::tools::{all_tools, Kind};
+use threedmm_mcp::tools::{all_tools, check_args, Kind};
 
 /// Commands the bridge implements (src/automation/*.cpp command tables).
 const BRIDGE_COMMANDS: &[&str] = &[
@@ -58,6 +59,7 @@ const BRIDGE_COMMANDS: &[&str] = &[
     "export_frames",
     "export_media",
     "storyboard",
+    "review_movie",
     "suggest_camera",
     "move_scene",
     "duplicate_scene",
@@ -107,4 +109,17 @@ fn schemas_are_objects_with_known_required_fields() {
             tool.name
         );
     }
+}
+
+#[test]
+fn unknown_and_missing_arguments_are_rejected() {
+    let tools = all_tools();
+    let find = |name: &str| tools.iter().find(|t| t.name == name).unwrap();
+    // `scene` instead of `index` must not fall through to the current scene
+    let err = check_args(find("delete_scene"), &json!({"scene": 1})).unwrap_err();
+    assert!(err.contains("'scene'") && err.contains("index"), "{err}");
+    assert!(check_args(find("delete_scene"), &json!({"index": 1})).is_ok());
+    assert!(check_args(find("delete_scene"), &json!({})).is_ok());
+    let err = check_args(find("add_scene"), &json!({})).unwrap_err();
+    assert!(err.contains("needs background"), "{err}");
 }

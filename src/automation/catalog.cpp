@@ -163,12 +163,15 @@ const std::vector<CatalogEntry> *PvecCatalog(ContentKind kind)
     return &(_mapCatalog[kind] = std::move(vec));
 }
 
+static const char *_PszDescription(const CatalogEntry &entry);
+
 bool FFindContent(Request &req, const std::string &strRef, const std::vector<ContentKind> &kinds,
                   const CatalogEntry **ppentry)
 {
     std::string strWant = StrLower(strRef);
     std::vector<const CatalogEntry *> vecPrefix;
     std::vector<const CatalogEntry *> vecSubstr;
+    std::vector<const CatalogEntry *> vecDescribed; // what it looks like ("diner", "robot")
     std::string strKinds;
 
     *ppentry = nullptr;
@@ -200,6 +203,8 @@ bool FFindContent(Request &req, const std::string &strRef, const std::vector<Con
                 vecPrefix.push_back(&entry);
             else if (strName.find(strWant) != std::string::npos)
                 vecSubstr.push_back(&entry);
+            else if (!strWant.empty() && StrLower(_PszDescription(entry)).find(strWant) != std::string::npos)
+                vecDescribed.push_back(&entry);
         }
     }
 
@@ -214,8 +219,14 @@ bool FFindContent(Request &req, const std::string &strRef, const std::vector<Con
         *ppentry = vecSubstr[0];
         return fTrue;
     }
+    if (vecPrefix.empty() && vecSubstr.empty() && vecDescribed.size() == 1)
+    {
+        *ppentry = vecDescribed[0];
+        return fTrue;
+    }
 
-    std::vector<const CatalogEntry *> &vecSuggest = vecPrefix.empty() ? vecSubstr : vecPrefix;
+    std::vector<const CatalogEntry *> &vecSuggest =
+        !vecPrefix.empty() ? vecPrefix : (!vecSubstr.empty() ? vecSubstr : vecDescribed);
     std::string strMessage = "no " + strKinds + " named '" + strRef + "'";
     if (!vecSuggest.empty())
     {
@@ -225,6 +236,8 @@ bool FFindContent(Request &req, const std::string &strRef, const std::vector<Con
             if (i > 0)
                 strMessage += ", ";
             strMessage += "'" + vecSuggest[i]->name + "'";
+            if (*_PszDescription(*vecSuggest[i]) != 0)
+                strMessage += std::string(" (") + _PszDescription(*vecSuggest[i]) + ")";
         }
     }
     else
@@ -437,17 +450,15 @@ static const struct
     {"Sasha the Dog", "dog (small)"},
 };
 
-static Json _JsonEntry(const CatalogEntry &entry)
+// The entry's description, or "" if there is none
+static const char *_PszDescription(const CatalogEntry &entry)
 {
-    Json json = Json::MakeObject();
-    json.Set("id", entry.id);
-    json.Set("name", entry.name);
     if (entry.kind == ContentKind::Background)
     {
         for (auto &desc : _rgbkgddesc)
         {
             if (entry.name == desc.pszName)
-                json.Set("description", desc.pszDescription);
+                return desc.pszDescription;
         }
     }
     else if (entry.kind == ContentKind::Actor)
@@ -455,9 +466,19 @@ static Json _JsonEntry(const CatalogEntry &entry)
         for (auto &desc : _rgtmpldesc)
         {
             if (entry.name == desc.pszName)
-                json.Set("description", desc.pszDescription);
+                return desc.pszDescription;
         }
     }
+    return "";
+}
+
+static Json _JsonEntry(const CatalogEntry &entry)
+{
+    Json json = Json::MakeObject();
+    json.Set("id", entry.id);
+    json.Set("name", entry.name);
+    if (*_PszDescription(entry) != 0)
+        json.Set("description", _PszDescription(entry));
     return json;
 }
 

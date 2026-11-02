@@ -28,7 +28,7 @@ const GUIDE_URI: &str = "3dmm://guide/workflow";
 const INSTRUCTIONS: &str = "Tools for making movies in Microsoft 3D Movie Maker (1995) through its automation \
 bridge. Typical order: list_backgrounds/preview_cameras -> add_scene -> list_templates/list_actions -> add_actor -> \
 render_frame(overlay) to block -> move_actor/speak_line/animate per actor in time order -> add_text -> \
-describe_timeline and render_frame to check -> save_movie. Read the resource 3dmm://guide/workflow for details. \
+review_movie (fix its warnings) and render_frame to check -> save_movie / export_video. Read the resource 3dmm://guide/workflow for details. \
 The app starts automatically on the first call.";
 
 pub struct ThreeDmmServer {
@@ -259,6 +259,7 @@ impl ThreeDmmServer {
 
     /// Runs one tool (anything but batch).
     async fn run_tool(&self, spec: &ToolSpec, args: Value) -> anyhow::Result<Vec<ContentBlock>> {
+        crate::tools::check_args(spec, &args).map_err(anyhow::Error::msg)?;
         let timeout = Duration::from_secs(spec.timeout_secs);
         match spec.kind {
             Kind::Launch => {
